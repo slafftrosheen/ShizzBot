@@ -142,6 +142,7 @@ void emergencyStop() {
 
 // ===== IMU ====================================================
 void readIMU() {
+    M5.Imu.update(); // Fetch fresh data!
     auto data = M5.Imu.getImuData();
     unsigned long nowUs = micros();
     float dt = (lastImuUs == 0) ? 0 : (nowUs - lastImuUs) / 1000000.0f;
@@ -320,6 +321,10 @@ void setup() {
     balancePID.kd = prefs.getFloat("kd", 0.6f);
     maxRpm = prefs.getInt("maxRpm", 1500);
 
+    // Default right motor to inverted if not set in prefs (for opposite facing wheels)
+    bool defaultInvR = !prefs.isKey("invR") ? true : prefs.getBool("invR");
+    bool defaultInvL = prefs.getBool("invL", false);
+
     // I2C
     Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(100000);  // 100kHz for stability
@@ -338,7 +343,7 @@ void setup() {
         motorL.setOutput(true); delay(5);
         motorL.setStallProtection(true); delay(5);
         motorL.setMaxSpeed(3000); delay(5);
-        motorL.setInverted(prefs.getBool("invL", false));
+        motorL.setInverted(defaultInvL);
         motorL.setRGB(0, 60, 0, 20);
     }
     if (motorROk) {
@@ -346,7 +351,7 @@ void setup() {
         motorR.setOutput(true); delay(5);
         motorR.setStallProtection(true); delay(5);
         motorR.setMaxSpeed(3000); delay(5);
-        motorR.setInverted(prefs.getBool("invR", false));
+        motorR.setInverted(defaultInvR);
         motorR.setRGB(0, 60, 0, 20);
     }
 
@@ -383,7 +388,12 @@ void setup() {
 
     // HTTP: serve WebUI
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *req) {
-        req->send(200, "text/html", WEBUI_HTML);
+        AsyncWebServerResponse *response = req->beginResponse(200, "text/html", WEBUI_HTML);
+        // Prevent aggressive mobile browser caching of the UI
+        response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        response->addHeader("Pragma", "no-cache");
+        response->addHeader("Expires", "-1");
+        req->send(response);
     });
 
     ElegantOTA.begin(&server);
