@@ -258,8 +258,24 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
                     balancePID.kp, balancePID.ki, balancePID.kd);
                 configDirty = true;
             }
-            else if (strcmp(cmd, "horn") == 0) {
-                soundEngine.playHorn();
+            else if (strcmp(cmd, "snd") == 0) {
+                const char* s = doc["s"];
+                if (s) {
+                    if (strcmp(s, "horn") == 0) soundEngine.playHorn();
+                    else if (strcmp(s, "chirp") == 0) soundEngine.playChirp();
+                    else if (strcmp(s, "scan") == 0) soundEngine.playScan();
+                    else if (strcmp(s, "err") == 0) soundEngine.playError();
+                }
+            }
+            else if (strcmp(cmd, "emo") == 0) {
+                const char* e = doc["e"];
+                if (e) {
+                    if (strcmp(e, "happy") == 0) robotFace.setEmotion(RobotFace::HAPPY);
+                    else if (strcmp(e, "angry") == 0) robotFace.setEmotion(RobotFace::ANGRY);
+                    else if (strcmp(e, "dizzy") == 0) robotFace.setEmotion(RobotFace::DIZZY);
+                    else if (strcmp(e, "surprised") == 0) robotFace.setEmotion(RobotFace::SURPRISED);
+                    else if (strcmp(e, "idle") == 0) robotFace.setEmotion(RobotFace::IDLE);
+                }
             }
         }
     }
@@ -434,6 +450,11 @@ void loop() {
     if (millis() - lastCmdTime > CMD_TIMEOUT && (cmdL != 0 || cmdR != 0)) {
         Serial.println("[!] Timeout -> stop");
         emergencyStop();
+    }
+
+    // Automatic reverse beep
+    if (cmdL < -10 && cmdR < -10) {
+        soundEngine.playReverseBeep();
     }
 
     // Read motor telemetry (throttled to avoid I2C congestion)

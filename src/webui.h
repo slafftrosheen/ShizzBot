@@ -233,6 +233,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;heigh
 <!-- TABS -->
 <div class="tabs">
   <button class="tab active" data-tab="drive">🎮 DRIVE</button>
+  <button class="tab" data-tab="emotes">🎭 EMOTES</button>
   <button class="tab" data-tab="sensors">📡 SENSORS</button>
   <button class="tab" data-tab="config">⚙️ CONFIG</button>
 </div>
@@ -275,6 +276,32 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;heigh
     <input type="range" id="maxsp" min="10" max="100" value="50">
   </div>
 
+</div>
+
+<!-- ============ EMOTES & SOUNDS TAB ============ -->
+<div class="page" id="pg-emotes">
+  <div class="pnl">
+    <div class="corner-bl"></div><div class="corner-br"></div>
+    <div class="pnl-title">Soundboard</div>
+    <div class="actions actions-4" style="grid-template-columns:1fr 1fr; gap:10px; margin-bottom:15px">
+      <button class="act act-horn" onclick="sendSnd('horn')">🔊 HORN</button>
+      <button class="act act-horn" onclick="sendSnd('chirp')">🤖 CHIRP</button>
+      <button class="act act-spin" onclick="sendSnd('scan')">📡 SCAN</button>
+      <button class="act act-rev" onclick="sendSnd('err')">❌ ERROR</button>
+    </div>
+  </div>
+
+  <div class="pnl">
+    <div class="corner-bl"></div><div class="corner-br"></div>
+    <div class="pnl-title">Face Override</div>
+    <div class="actions actions-4" style="grid-template-columns:1fr 1fr; gap:10px">
+      <button class="act act-fwd" onclick="sendEmo('happy')">😄 HAPPY</button>
+      <button class="act act-rev" onclick="sendEmo('angry')">😠 ANGRY</button>
+      <button class="act act-spin" onclick="sendEmo('surprised')">😲 SURPRISE</button>
+      <button class="act act-horn" onclick="sendEmo('dizzy')">😵‍💫 DIZZY</button>
+      <button class="act" style="grid-column: span 2; border-color:var(--dim); color:var(--txt)" onclick="sendEmo('idle')">😐 NORMAL</button>
+    </div>
+  </div>
 </div>
 
 <!-- ============ SENSORS TAB ============ -->
@@ -551,11 +578,11 @@ slider.addEventListener('input',()=>{
 
 // ===== QUICK ACTIONS =====
 function qAct(a){
-  if(a==='horn'){ wsSend({c:'horn'}); return; }
-  
   if(a==='fwd'){sL=maxPct;sR=maxPct;}
   else if(a==='rev'){sL=-maxPct;sR=-maxPct;}
   else if(a==='spin'){sL=maxPct;sR=-maxPct;}
+  else if(a==='horn'){sendSnd('horn'); return;}
+  
   document.getElementById('sp-l').textContent=sL;
   document.getElementById('sp-r').textContent=sR;
   wsSend({c:'m',l:sL,r:sR});
@@ -564,6 +591,15 @@ function qAct(a){
     document.getElementById('sp-r').textContent='0';
     wsSend({c:'m',l:0,r:0});
   },1200);
+}
+
+// ===== EMOTES & SOUNDS =====
+function sendSnd(snd) {
+  wsSend({c:'snd', s:snd});
+}
+
+function sendEmo(emo) {
+  wsSend({c:'emo', e:emo});
 }
 
 // ===== ESTOP =====
