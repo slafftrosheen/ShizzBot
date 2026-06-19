@@ -25,8 +25,8 @@ bool isDancing = false;
 unsigned long danceStartTime = 0;
 
 // ===== CONFIGURATION =========================================
-const char* WIFI_SSID = "YOUR_WIFI_SSID";
-const char* WIFI_PASS = "YOUR_WIFI_PASS";
+String wifiSSID;
+String wifiPass;
 
 #define I2C_SDA  9
 #define I2C_SCL  10
@@ -299,6 +299,17 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
                 }
                 configDirty = true;
             }
+            else if (strcmp(cmd, "wifi") == 0) {
+                const char* s = doc["s"];
+                const char* p = doc["p"];
+                if (s && p) {
+                    prefs.putString("ssid", s);
+                    prefs.putString("pass", p);
+                    Serial.println("[NVS] WiFi credentials saved. Rebooting...");
+                    delay(500);
+                    ESP.restart();
+                }
+            }
         }
     }
 }
@@ -366,6 +377,9 @@ void setup() {
     stealthMode = prefs.getBool("stealth", false);
     if (stealthMode) M5.Display.setBrightness(0);
 
+    wifiSSID = prefs.getString("ssid", "Sinstro_HomeLab");
+    wifiPass = prefs.getString("pass", "Dev18118810208");
+
     // I2C
     Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(100000);  // 100kHz for stability
@@ -403,7 +417,7 @@ void setup() {
 
     // WiFi
     drawStatus("WiFi...");
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
     int tries = 0;
     while (WiFi.status() != WL_CONNECTED && tries < 20) {
         delay(500); Serial.print("."); tries++;

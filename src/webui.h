@@ -418,6 +418,16 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;heigh
 
   <div class="pnl">
     <div class="corner-bl"></div><div class="corner-br"></div>
+    <div class="pnl-title">WiFi Setup</div>
+    <div style="display:flex; flex-direction:column; gap:8px;">
+      <input type="text" id="wifi-ssid" placeholder="Home WiFi SSID" style="width:100%; box-sizing:border-box; padding:8px; border:1px solid rgba(0,240,255,.15); background:rgba(0,240,255,.04); color:var(--cyan); font-family:'Share Tech Mono',monospace; font-size:14px; outline:none; border-radius:4px;">
+      <input type="password" id="wifi-pass" placeholder="Password" style="width:100%; box-sizing:border-box; padding:8px; border:1px solid rgba(0,240,255,.15); background:rgba(0,240,255,.04); color:var(--cyan); font-family:'Share Tech Mono',monospace; font-size:14px; outline:none; border-radius:4px;">
+      <button class="act act-spin" onclick="saveWiFi()" style="width:100%; padding:10px; margin-top:5px;">💾 SAVE & REBOOT</button>
+    </div>
+  </div>
+
+  <div class="pnl">
+    <div class="corner-bl"></div><div class="corner-br"></div>
     <div class="pnl-title">System</div>
     <button class="act act-fwd" onclick="window.location.href='/update'" style="width:100%;margin-top:5px">⬆️ FIRMWARE UPDATE</button>
   </div>
@@ -674,9 +684,23 @@ function sendCfg(){
     bal:document.getElementById('cfg-balance').checked?1:0,
     invL:document.getElementById('cfg-invL').checked?1:0,
     invR:document.getElementById('cfg-invR').checked?1:0,
-    maxSp:parseInt(document.getElementById('maxsp').value)
+    maxSp:maxPct,
+    stealth:document.getElementById('cfg-stealth').checked?1:0
   });
 }
+
+// ===== WIFI =====
+function saveWiFi(){
+  const s = document.getElementById('wifi-ssid').value.trim();
+  const p = document.getElementById('wifi-pass').value;
+  if(s){
+    wsSend({c:'wifi', s:s, p:p});
+    alert('Credentials saved! ShizzBot is rebooting to connect...');
+  } else {
+    alert('Please enter an SSID.');
+  }
+}
+
 function sendPid(){
   wsSend({c:'pid',
     kp:parseFloat(document.getElementById('pid-kp').value),
