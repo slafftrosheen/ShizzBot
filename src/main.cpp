@@ -164,8 +164,8 @@ void balanceLoop(float dt) {
     float leanAngle = lean * 0.15f;  // max ±15° lean from joystick
     
     // PID computes motor power to maintain upright (pitch ≈ leanAngle)
-    // We pass imuFilter.gyroY as the derivative term for a much smoother response
-    float pidOut = balancePID.compute(leanAngle, imuPitch, imuFilter.gyroY, dt);
+    // We pass imuFilter.gyroRatePitch as the derivative term for a much smoother response
+    float pidOut = balancePID.compute(leanAngle, imuPitch, imuFilter.gyroRatePitch, dt);
 
     int32_t outL = (int32_t)pidOut + steer;
     int32_t outR = (int32_t)pidOut - steer;

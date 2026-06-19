@@ -562,8 +562,20 @@ joy.addEventListener('pointermove',e=>{if(joyActive)joyMove(e.clientX,e.clientY)
 joy.addEventListener('pointerup',()=>{joyActive=false;joyReset();});
 joy.addEventListener('pointercancel',()=>{joyActive=false;joyReset();});
 
-// Send motor commands at fixed rate (not every pointer move)
-setInterval(()=>{if(joyActive)wsSend({c:'m',l:sL,r:sR});},80);
+// Send motor commands at max 20Hz, only when changed, plus a heartbeat
+let lastSentL = null, lastSentR = null;
+setInterval(()=>{
+  if(joyActive){
+    if(sL !== lastSentL || sR !== lastSentR) {
+      wsSend({c:'m',l:sL,r:sR});
+      lastSentL = sL; lastSentR = sR;
+    }
+  } else {
+    if(Date.now() - lastPing > 500) {
+      wsSend({c:'m',l:0,r:0}); // Heartbeat
+    }
+  }
+}, 50);
 
 // ===== MAX SPEED =====
 const slider=document.getElementById('maxsp');

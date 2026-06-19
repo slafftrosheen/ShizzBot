@@ -10,26 +10,26 @@ class IMUFilter {
 public:
     float pitch = 0;   // degrees, + = tilted forward
     float roll  = 0;   // degrees, + = tilted right
-    float gyroY = 0;   // raw gyro rate (dps) around Y (pitch)
+    float gyroRatePitch = 0;   // raw gyro rate (dps) around X (pitch)
 
     void update(float ax, float ay, float az,
                 float gx, float gy, float gz,
                 float dt) {
         
-        // Save raw gyro for PID derivative
-        gyroY = gy;
+        // Save raw gyro for PID derivative (X is pitch in vertical orientation)
+        gyroRatePitch = gx;
         // Protection against freefall (accel magnitude near 0)
         float accelMag = sqrtf(ax*ax + ay*ay + az*az);
         if (accelMag < 0.1f) {
             // In freefall or bump, just trust gyro
-            pitch = pitch + gy * dt;
-            roll  = roll  + gx * dt;
+            pitch = pitch + gx * dt;
+            roll  = roll  + gz * dt;
             return;
         }
 
-        // Accel-based angles (noisy but no drift)
-        float accelPitch = atan2f(ax, sqrtf(ay*ay + az*az)) * RAD2DEG;
-        float accelRoll  = atan2f(ay, sqrtf(ax*ax + az*az)) * RAD2DEG;
+        // Accel-based angles for vertical orientation (Y is down)
+        float accelPitch = atan2f(az, ay) * RAD2DEG;
+        float accelRoll  = atan2f(ax, ay) * RAD2DEG;
 
         if (dt <= 0 || dt > 0.5f) {
             // First run or bogus dt — just trust accel
@@ -39,8 +39,8 @@ public:
         }
 
         // Complementary filter: trust gyro short-term, accel long-term
-        pitch = ALPHA * (pitch + gy * dt) + (1.0f - ALPHA) * accelPitch;
-        roll  = ALPHA * (roll  + gx * dt) + (1.0f - ALPHA) * accelRoll;
+        pitch = ALPHA * (pitch + gx * dt) + (1.0f - ALPHA) * accelPitch;
+        roll  = ALPHA * (roll  + gz * dt) + (1.0f - ALPHA) * accelRoll;
     }
 
 private:
