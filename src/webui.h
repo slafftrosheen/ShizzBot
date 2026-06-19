@@ -254,11 +254,25 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;heigh
         <div class="dir-arrow w" id="da-w">◀</div>
         <div class="joy-thumb" id="joy-thumb"></div>
       </div>
-      <div class="speed-row">
-        <div class="speed-box"><div class="speed-lbl">Left Motor</div>
-          <div class="speed-num l-color" id="sp-l">0</div></div>
-        <div class="speed-box"><div class="speed-lbl">Right Motor</div>
-          <div class="speed-num r-color" id="sp-r">0</div></div>
+      <div class="speed-row" style="display:flex; justify-content:space-around; align-items:center;">
+        <div class="speed-box" style="position:relative; width:80px; height:80px; padding:0;">
+          <svg width="80" height="80" viewBox="0 0 100 100" style="position:absolute; inset:0; transform:rotate(-90deg);">
+            <circle cx="50" cy="50" r="40" fill="none" stroke="rgba(0,240,255,0.1)" stroke-width="8"></circle>
+            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--cyan)" stroke-width="8" id="svg-l" stroke-dasharray="251" stroke-dashoffset="251" stroke-linecap="round" style="transition: stroke-dashoffset 0.1s;"></circle>
+          </svg>
+          <div style="position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+            <div class="speed-num l-color" id="sp-l" style="font-size:24px;">0</div>
+          </div>
+        </div>
+        <div class="speed-box" style="position:relative; width:80px; height:80px; padding:0;">
+          <svg width="80" height="80" viewBox="0 0 100 100" style="position:absolute; inset:0; transform:rotate(-90deg);">
+            <circle cx="50" cy="50" r="40" fill="none" stroke="rgba(255,0,255,0.1)" stroke-width="8"></circle>
+            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--magenta)" stroke-width="8" id="svg-r" stroke-dasharray="251" stroke-dashoffset="251" stroke-linecap="round" style="transition: stroke-dashoffset 0.1s;"></circle>
+          </svg>
+          <div style="position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+            <div class="speed-num r-color" id="sp-r" style="font-size:24px;">0</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -300,6 +314,14 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;heigh
       <button class="act act-spin" onclick="sendEmo('surprised')">😲 SURPRISE</button>
       <button class="act act-horn" onclick="sendEmo('dizzy')">😵‍💫 DIZZY</button>
       <button class="act" style="grid-column: span 2; border-color:var(--dim); color:var(--txt)" onclick="sendEmo('idle')">😐 NORMAL</button>
+    </div>
+  </div>
+
+  <div class="pnl">
+    <div class="corner-bl"></div><div class="corner-br"></div>
+    <div class="pnl-title">Macros</div>
+    <div class="actions" style="grid-template-columns:1fr;">
+      <button class="act act-horn" onclick="wsSend({c:'dance'})" style="padding:15px; font-size:16px;">🕺 DANCE SEQUENCE</button>
     </div>
   </div>
 </div>
@@ -356,6 +378,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;heigh
     <div class="cfg-row">
       <span class="cfg-row-label">Self-Balancing Mode</span>
       <label class="toggle"><input type="checkbox" id="cfg-balance" onchange="sendCfg()">
+        <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+    </div>
+    <div class="cfg-row">
+      <span class="cfg-row-label" style="color:var(--magenta)">Stealth Mode (No LCD/LED/Sound)</span>
+      <label class="toggle"><input type="checkbox" id="cfg-stealth" onchange="sendCfg()">
         <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
     </div>
     <div class="cfg-row">
@@ -417,6 +444,13 @@ document.querySelectorAll('.tab').forEach(t=>{
     document.getElementById('pg-'+t.dataset.tab).classList.add('active');
   });
 });
+
+function updateGauge(id, val) {
+  const circle = document.getElementById(id);
+  if(!circle) return;
+  const pct = Math.abs(val) / 100;
+  circle.style.strokeDashoffset = 251 - (251 * pct);
+}
 
 // ===== WEBSOCKET =====
 function wsConnect(){
@@ -497,6 +531,7 @@ function wsConnect(){
         document.getElementById('pid-kd').value = d.kd;
         document.getElementById('maxsp').value = d.maxSp;
         document.getElementById('maxsp-v').textContent = d.maxSp + '%';
+        if (d.stealth !== undefined) document.getElementById('cfg-stealth').checked = (d.stealth === 1);
         maxPct = d.maxSp;
       }
     }catch(ex){}
@@ -539,6 +574,8 @@ function joyMove(cx,cy){
 
   document.getElementById('sp-l').textContent=sL;
   document.getElementById('sp-r').textContent=sR;
+  updateGauge('svg-l', sL);
+  updateGauge('svg-r', sR);
 
   // Direction arrows
   arrows.n.classList.toggle('lit',ny>0.25);
@@ -553,6 +590,8 @@ function joyReset(){
   sL=0;sR=0;
   document.getElementById('sp-l').textContent='0';
   document.getElementById('sp-r').textContent='0';
+  updateGauge('svg-l', 0);
+  updateGauge('svg-r', 0);
   Object.values(arrows).forEach(a=>a.classList.remove('lit'));
   wsSend({c:'m',l:0,r:0});
 }
@@ -597,10 +636,14 @@ function qAct(a){
   
   document.getElementById('sp-l').textContent=sL;
   document.getElementById('sp-r').textContent=sR;
+  updateGauge('svg-l', sL);
+  updateGauge('svg-r', sR);
   wsSend({c:'m',l:sL,r:sR});
   setTimeout(()=>{sL=0;sR=0;
     document.getElementById('sp-l').textContent='0';
     document.getElementById('sp-r').textContent='0';
+    updateGauge('svg-l', 0);
+    updateGauge('svg-r', 0);
     wsSend({c:'m',l:0,r:0});
   },1200);
 }
@@ -620,6 +663,8 @@ document.getElementById('btn-estop').addEventListener('click',()=>{
   sL=0;sR=0;
   document.getElementById('sp-l').textContent='0';
   document.getElementById('sp-r').textContent='0';
+  updateGauge('svg-l', 0);
+  updateGauge('svg-r', 0);
   if(navigator.vibrate)navigator.vibrate(200);
 });
 

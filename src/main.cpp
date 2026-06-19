@@ -19,6 +19,11 @@
 Preferences prefs;
 bool configDirty = false;
 
+// ===== PHASE 6 GLOBALS =====
+bool stealthMode = false;
+bool isDancing = false;
+unsigned long danceStartTime = 0;
+
 // ===== CONFIGURATION =========================================
 const char* WIFI_SSID = "YOUR_WIFI_SSID";
 const char* WIFI_PASS = "YOUR_WIFI_PASS";
@@ -277,6 +282,23 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
                     else if (strcmp(e, "idle") == 0) robotFace.setEmotion(RobotFace::IDLE);
                 }
             }
+            else if (strcmp(cmd, "dance") == 0) {
+                isDancing = true;
+                danceStartTime = millis();
+                Serial.println("[!] DANCE MODE ACTIVATED");
+            }
+            else if (strcmp(cmd, "stealth") == 0) {
+                stealthMode = (doc["v"] == 1);
+                M5.Display.setBrightness(stealthMode ? 0 : 255);
+                if (stealthMode) {
+                    if (motorLOk) motorL.setRGB(0, 0, 0, 0);
+                    if (motorROk) motorR.setRGB(0, 0, 0, 0);
+                } else {
+                    if (motorLOk) motorL.setRGB(0, 60, 0, 20);
+                    if (motorROk) motorR.setRGB(0, 60, 0, 20);
+                }
+                configDirty = true;
+            }
         }
     }
 }
@@ -290,7 +312,7 @@ void pushTelemetry() {
         "{\"v\":%d,\"t\":%d,\"sl\":%d,\"sr\":%d,\"cl\":%d,\"cr\":%d,"
         "\"p\":%d,\"r\":%d,\"m\":\"%s\","
         "\"ip\":\"%s\",\"ssid\":\"%s\",\"rssi\":%d,\"wc\":%u,\"batt\":%d,"
-        "\"kp\":%.1f,\"ki\":%.1f,\"kd\":%.1f,\"maxSp\":%d,\"invL\":%d,\"invR\":%d}",
+        "\"kp\":%.1f,\"ki\":%.1f,\"kd\":%.1f,\"maxSp\":%d,\"invL\":%d,\"invR\":%d,\"stealth\":%d}",
         telVoltMV,
         telTempRaw,
         telRpmL, telRpmR,
@@ -306,7 +328,8 @@ void pushTelemetry() {
         balancePID.kp, balancePID.ki, balancePID.kd,
         maxRpm / 30, // send back as percentage (0-100)
         motorLOk ? motorL.getInverted() : 0,
-        motorROk ? motorR.getInverted() : 0
+        motorROk ? motorR.getInverted() : 0,
+        stealthMode ? 1 : 0
     );
     ws.textAll(buf);
 }
@@ -340,6 +363,8 @@ void setup() {
     // Default right motor to inverted if not set in prefs (for opposite facing wheels)
     bool defaultInvR = !prefs.isKey("invR") ? true : prefs.getBool("invR");
     bool defaultInvL = prefs.getBool("invL", false);
+    stealthMode = prefs.getBool("stealth", false);
+    if (stealthMode) M5.Display.setBrightness(0);
 
     // I2C
     Wire.begin(I2C_SDA, I2C_SCL);
@@ -360,7 +385,8 @@ void setup() {
         motorL.setStallProtection(true); delay(5);
         motorL.setMaxSpeed(3000); delay(5);
         motorL.setInverted(defaultInvL);
-        motorL.setRGB(0, 60, 0, 20);
+        if (!stealthMode) motorL.setRGB(0, 60, 0, 20);
+        else motorL.setRGB(0,0,0,0);
     }
     if (motorROk) {
         motorR.setMode(ROLLER_MODE_SPEED); delay(5);
@@ -368,7 +394,8 @@ void setup() {
         motorR.setStallProtection(true); delay(5);
         motorR.setMaxSpeed(3000); delay(5);
         motorR.setInverted(defaultInvR);
-        motorR.setRGB(0, 60, 0, 20);
+        if (!stealthMode) motorR.setRGB(0, 60, 0, 20);
+        else motorR.setRGB(0,0,0,0);
     }
 
     // Start FreeRTOS Balance Task on Core 1 (App Core)
@@ -447,13 +474,45 @@ void loop() {
     soundEngine.update();
 
     // Command timeout safety
-    if (millis() - lastCmdTime > CMD_TIMEOUT && (cmdL != 0 || cmdR != 0)) {
+    if (millis() - lastCmdTime > CMD_TIMEOUT && (cmdL != 0 || cmdR != 0) && !isDancing) {
         Serial.println("[!] Timeout -> stop");
         emergencyStop();
     }
 
+    // Battery Fatigue System
+    static unsigned long lastBattCheck = 0;
+    if (millis() - lastBattCheck > 5000) {
+        lastBattCheck = millis();
+        int batt = M5.Power.getBatteryLevel();
+        if (batt < 20 && actualOutL == 0 && actualOutR == 0 && !isDancing) {
+            robotFace.setEmotion(RobotFace::SLEEPY);
+            if (random(100) < 10 && !stealthMode) soundEngine.playError(); // Occasional groan
+        } else if (batt >= 20 && robotFace.getEmotion() == RobotFace::SLEEPY) {
+            robotFace.setEmotion(RobotFace::IDLE);
+        }
+    }
+
+    // Dance Macro
+    if (isDancing) {
+        unsigned long t = millis() - danceStartTime;
+        if (t < 800) {
+            cmdL = 100; cmdR = -100; robotFace.setEmotion(RobotFace::SURPRISED);
+            if (t == 0 && !stealthMode) soundEngine.playChirp();
+        } else if (t < 1600) {
+            cmdL = -100; cmdR = 100; robotFace.setEmotion(RobotFace::HAPPY);
+        } else if (t < 2200) {
+            cmdL = 100; cmdR = 100; robotFace.setEmotion(RobotFace::ANGRY);
+            if (t == 1600 && !stealthMode) soundEngine.playHorn();
+        } else if (t < 2800) {
+            cmdL = -100; cmdR = -100; robotFace.setEmotion(RobotFace::DIZZY);
+        } else {
+            cmdL = 0; cmdR = 0; isDancing = false; robotFace.setEmotion(RobotFace::IDLE);
+        }
+        if (driveMode == DRIVE_SKID) applyMotors(cmdL, cmdR);
+    }
+
     // Automatic reverse beep
-    if (cmdL < -10 && cmdR < -10) {
+    if (cmdL < -10 && cmdR < -10 && !stealthMode) {
         soundEngine.playReverseBeep();
     }
 
@@ -481,7 +540,9 @@ void loop() {
     }
 
     // OLED Face Update
-    robotFace.update(actualOutL, actualOutR);
+    if (!stealthMode) {
+        robotFace.update(actualOutL, actualOutR);
+    }
     // updateOLED();
 
     // WebSocket cleanup
@@ -501,6 +562,7 @@ void loop() {
         prefs.putInt("maxRpm", maxRpm);
         if (motorLOk) prefs.putBool("invL", motorL.getInverted());
         if (motorROk) prefs.putBool("invR", motorR.getInverted());
+        prefs.putBool("stealth", stealthMode);
         Serial.println("[NVS] Config saved to Flash");
     }
 

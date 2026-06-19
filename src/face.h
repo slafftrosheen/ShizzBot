@@ -26,6 +26,10 @@ public:
         }
     }
 
+    Emotion getEmotion() const {
+        return _currentEmotion;
+    }
+
     // Pass in the actual rpm commands to determine face wobble
     void update(int32_t speedL, int32_t speedR) {
         unsigned long now = millis();
