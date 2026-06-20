@@ -62,6 +62,10 @@ int32_t telTempRaw = 0;
 int32_t telRpm = 0;
 int32_t telCur = 0;
 
+// Heading Lock
+bool headingLockActive = false;
+float targetHeading = 0.0f;
+
 // IMU
 IMUFilter imuFilter;
 float imuPitch = 0, imuRoll = 0;
@@ -91,6 +95,7 @@ void applyMotor(int32_t throttle) {
 void emergencyStop() {
     cmdThrottle = 0; cmdSteer = 0;
     actualOut = 0;
+    headingLockActive = false;
     servos.stopAll();
     if (motorOk) { motor.stop(); motor.setRGB(255, 0, 0, 60); }
     delay(10);
@@ -152,7 +157,24 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
                 cmdSteer = constrain((int)doc["s"], -100, 100);
                 lastCmdTime = millis();
                 applyMotor(cmdThrottle);
-                servos.setSteer(cmdSteer);
+                
+                // If manual steering is applied, break heading lock
+                if (abs(cmdSteer) > 5) headingLockActive = false;
+                
+                if (!headingLockActive) {
+                    servos.setSteer(cmdSteer);
+                }
+            }
+            // === HEADING LOCK ===
+            else if (strcmp(cmd, "hdg") == 0) {
+                if (doc["active"] == 1) {
+                    targetHeading = doc["h"];
+                    headingLockActive = true;
+                    Serial.printf("[HDG] Lock engaged: %.1f\n", targetHeading);
+                } else {
+                    headingLockActive = false;
+                    Serial.println("[HDG] Lock disengaged");
+                }
             }
             // === EMERGENCY STOP ===
             else if (strcmp(cmd, "stop") == 0) {
@@ -197,6 +219,19 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
                 prefs.putInt("color", robotColor);
                 Serial.printf("[ID] Robot color set to: %d\n", robotColor);
                 configDirty = true;
+            }
+            // === FACE CONFIG ===
+            else if (strcmp(cmd, "faceCfg") == 0) {
+                robotFace.faceType = doc["type"] | 0;
+                robotFace.eyeRadius = constrain((int)doc["eye"], 10, 25);
+                robotFace.blinkRate = constrain((int)doc["blink"], 0, 100);
+                robotFace.bounceFactor = constrain((int)doc["bounce"], 0, 100);
+                
+                prefs.putInt("fType", robotFace.faceType);
+                prefs.putInt("fEye", robotFace.eyeRadius);
+                prefs.putInt("fBlink", robotFace.blinkRate);
+                prefs.putInt("fBounce", robotFace.bounceFactor);
+                Serial.println("[FACE] Config updated & saved");
             }
             // === ARM SERVOS ===
             else if (strcmp(cmd, "arm") == 0) {
@@ -283,12 +318,12 @@ void pushTelemetry() {
     char buf[512];
     snprintf(buf, sizeof(buf),
         "{\"v\":%d,\"t\":%d,\"rpm\":%d,\"cur\":%d,"
-        "\"p\":%d,\"r\":%d,\"hdg\":%d,"
+        "\"p\":%d,\"r\":%d,\"hdg\":%d,\"hdgLck\":%d,"
         "\"ip\":\"%s\",\"ssid\":\"%s\",\"rssi\":%d,\"wc\":%u,\"batt\":%d,"
         "\"maxSp\":%d,\"invM\":%d,\"invS\":%d,\"stealth\":%d,"
         "\"name\":\"%s\",\"color\":%d,\"score\":%d,"
         "\"steer\":%d,\"armB\":%d,\"armL\":%d,\"grip\":%d,"
-        "\"servoMax\":%d}",
+        "\"servoMax\":%d,\"fType\":%d,\"fEye\":%d,\"fBlink\":%d,\"fBounce\":%d}",
         telVoltMV,
         telTempRaw,
         telRpm,
@@ -296,6 +331,7 @@ void pushTelemetry() {
         (int)(imuPitch * 10),
         (int)(imuRoll * 10),
         (int)(imuFilter.heading * 10),
+        headingLockActive ? (int)(targetHeading * 10) : -1,
         WiFi.localIP().toString().c_str(),
         WiFi.SSID().c_str(),
         WiFi.RSSI(),
@@ -312,7 +348,11 @@ void pushTelemetry() {
         servos.armBaseSpeed,
         servos.armLiftSpeed,
         servos.gripSpeed,
-        servos.maxServoSpeed
+        servos.maxServoSpeed,
+        robotFace.faceType,
+        robotFace.eyeRadius,
+        robotFace.blinkRate,
+        robotFace.bounceFactor
     );
     ws.textAll(buf);
 }
@@ -343,7 +383,13 @@ void setup() {
     robotColor = prefs.getInt("color", 0);
     robotFace.robotName = robotName;
     robotFace.robotColor = robotColor;
-    Serial.printf("[ID] Robot: %s (color=%d)\n", robotName.c_str(), robotColor);
+    
+    robotFace.faceType = prefs.getInt("fType", 0);
+    robotFace.eyeRadius = prefs.getInt("fEye", 15);
+    robotFace.blinkRate = prefs.getInt("fBlink", 50);
+    robotFace.bounceFactor = prefs.getInt("fBounce", 50);
+    
+    Serial.printf("[ID] Robot: %s (color=%d, faceType=%d)\n", robotName.c_str(), robotColor, robotFace.faceType);
 
     wifiSSID = prefs.getString("ssid", "Sinstro_HomeLab");
     wifiPass = prefs.getString("pass", "Dev18118810208");
@@ -470,6 +516,27 @@ void loop() {
         } else if (batt >= 20 && robotFace.getEmotion() == RobotFace::SLEEPY) {
             robotFace.setEmotion(RobotFace::IDLE);
         }
+    }
+
+    // Heading Lock Auto-Steering
+    if (headingLockActive && !isDancing && actualOut != 0) {
+        // Calculate shortest angular distance (-180 to +180)
+        float currentHdg = imuFilter.heading;
+        float error = targetHeading - currentHdg;
+        
+        // Normalize error to -180..+180
+        while (error <= -180.0f) error += 360.0f;
+        while (error > 180.0f) error -= 360.0f;
+        
+        // Simple P-controller
+        float pGain = 1.5f; 
+        int steerCorr = (int)(error * pGain);
+        steerCorr = constrain(steerCorr, -100, 100);
+        
+        // If moving backwards, invert steering correction
+        if (actualOut < 0) steerCorr = -steerCorr;
+        
+        servos.setSteer(steerCorr);
     }
 
     // Dance Macro (single motor + steering)

@@ -18,6 +18,12 @@ public:
     String robotName = "ShizzBot";
     float heading = 0; // 0-360 from IMU, displayed as mini compass
 
+    // Customization
+    int faceType = 0;      // 0=Boy, 1=Girl
+    int eyeRadius = 15;    // 10 to 25
+    int blinkRate = 50;    // 0 to 100 (100 = fastest)
+    int bounceFactor = 50; // 0 to 100 (100 = most bounce)
+
     uint32_t getAccentColor() {
         switch(robotColor) {
             case 1: return M5.Display.color565(255, 0, 170);  // magenta
@@ -93,7 +99,8 @@ public:
         // Bounce effect when moving (sine wave based on time and speed)
         if (abs(avgSpeed) > 10) {
             float bounceFreq = abs(avgSpeed) * 0.02f;
-            _bounceY = sin(now * 0.005f * bounceFreq) * (abs(avgSpeed) / 10.0f);
+            float bounceAmp = (bounceFactor / 50.0f);
+            _bounceY = sin(now * 0.005f * bounceFreq) * (abs(avgSpeed) / 10.0f) * bounceAmp;
         } else {
             _bounceY = 0;
         }
@@ -137,7 +144,8 @@ private:
                 if (_isBlinking) {
                     _nextBlink = now + 150; 
                 } else {
-                    _nextBlink = now + 2000 + random(3000); 
+                    int baseDelay = map(blinkRate, 0, 100, 5000, 500); // 100=fast, 0=slow
+                    _nextBlink = now + baseDelay + random(baseDelay); 
                 }
             }
         } else {
@@ -158,36 +166,36 @@ private:
             _canvas.drawLine(eyeRightX - 12, cy + 12, eyeRightX + 12, cy - 12, eyeColor);
         } 
         else if (_currentEmotion == SLEEPY) {
-            _canvas.fillRect(eyeLeftX - 15, cy, 30, 10, eyeColor);
-            _canvas.fillRect(eyeRightX - 15, cy, 30, 10, eyeColor);
+            _canvas.fillRect(eyeLeftX - eyeRadius, cy, eyeRadius*2, 10, eyeColor);
+            _canvas.fillRect(eyeRightX - eyeRadius, cy, eyeRadius*2, 10, eyeColor);
         }
         else if (_currentEmotion == ANGRY) {
             eyeColor = TFT_RED;
-            _canvas.fillCircle(eyeLeftX + xo, cy + yo, 15, eyeColor);
-            _canvas.fillCircle(eyeRightX + xo, cy + yo, 15, eyeColor);
+            _canvas.fillCircle(eyeLeftX + xo, cy + yo, eyeRadius, eyeColor);
+            _canvas.fillCircle(eyeRightX + xo, cy + yo, eyeRadius, eyeColor);
             // Angry brows (angled lines cutting into the circle)
             _canvas.fillTriangle(eyeLeftX-20, cy-20, eyeLeftX+20, cy-5, eyeLeftX-20, cy-5, TFT_BLACK);
             _canvas.fillTriangle(eyeRightX-20, cy-5, eyeRightX+20, cy-20, eyeRightX+20, cy-5, TFT_BLACK);
-            _canvas.fillCircle(eyeLeftX + xo + xo/2, cy + yo + yo/2, 5, TFT_BLACK);
-            _canvas.fillCircle(eyeRightX + xo + xo/2, cy + yo + yo/2, 5, TFT_BLACK);
+            _canvas.fillCircle(eyeLeftX + xo + xo/2, cy + yo + yo/2, eyeRadius/3, TFT_BLACK);
+            _canvas.fillCircle(eyeRightX + xo + xo/2, cy + yo + yo/2, eyeRadius/3, TFT_BLACK);
         }
         else if (_currentEmotion == HAPPY) {
             eyeColor = TFT_GREEN;
             if (_isBlinking) {
-                _canvas.fillRect(eyeLeftX - 15, cy - 2, 30, 4, eyeColor);
-                _canvas.fillRect(eyeRightX - 15, cy - 2, 30, 4, eyeColor);
+                _canvas.fillRect(eyeLeftX - eyeRadius, cy - 2, eyeRadius*2, 4, eyeColor);
+                _canvas.fillRect(eyeRightX - eyeRadius, cy - 2, eyeRadius*2, 4, eyeColor);
             } else {
                 // Happy arc eyes (half circles)
-                _canvas.fillCircle(eyeLeftX + xo, cy + yo, 16, eyeColor);
-                _canvas.fillCircle(eyeRightX + xo, cy + yo, 16, eyeColor);
-                _canvas.fillCircle(eyeLeftX + xo, cy + yo + 6, 16, TFT_BLACK); // cutout bottom
-                _canvas.fillCircle(eyeRightX + xo, cy + yo + 6, 16, TFT_BLACK); 
+                _canvas.fillCircle(eyeLeftX + xo, cy + yo, eyeRadius+1, eyeColor);
+                _canvas.fillCircle(eyeRightX + xo, cy + yo, eyeRadius+1, eyeColor);
+                _canvas.fillCircle(eyeLeftX + xo, cy + yo + 6, eyeRadius+1, TFT_BLACK); // cutout bottom
+                _canvas.fillCircle(eyeRightX + xo, cy + yo + 6, eyeRadius+1, TFT_BLACK); 
             }
         }
         else if (_currentEmotion == SURPRISED) {
             eyeColor = TFT_YELLOW;
-            _canvas.fillCircle(eyeLeftX, cy - 10, 20, eyeColor); // big eyes!
-            _canvas.fillCircle(eyeRightX, cy - 10, 20, eyeColor);
+            _canvas.fillCircle(eyeLeftX, cy - 10, eyeRadius+5, eyeColor); // big eyes!
+            _canvas.fillCircle(eyeRightX, cy - 10, eyeRadius+5, eyeColor);
             _canvas.fillCircle(eyeLeftX, cy - 10, 6, TFT_BLACK); // small pupils
             _canvas.fillCircle(eyeRightX, cy - 10, 6, TFT_BLACK);
         }
@@ -196,21 +204,43 @@ private:
             float spinAngle = now * 0.01f;
             int dx = cos(spinAngle) * 10;
             int dy = sin(spinAngle) * 10;
-            _canvas.drawCircle(eyeLeftX, cy, 15, eyeColor);
-            _canvas.drawCircle(eyeRightX, cy, 15, eyeColor);
+            _canvas.drawCircle(eyeLeftX, cy, eyeRadius, eyeColor);
+            _canvas.drawCircle(eyeRightX, cy, eyeRadius, eyeColor);
             _canvas.fillCircle(eyeLeftX + dx, cy + dy, 6, eyeColor);
             _canvas.fillCircle(eyeRightX + dx, cy + dy, 6, eyeColor);
         }
         else if (_isBlinking) {
-            _canvas.fillRect(eyeLeftX - 15, cy - 2 + yo, 30, 4, eyeColor);
-            _canvas.fillRect(eyeRightX - 15, cy - 2 + yo, 30, 4, eyeColor);
+            _canvas.fillRect(eyeLeftX - eyeRadius, cy - 2 + yo, eyeRadius*2, 4, eyeColor);
+            _canvas.fillRect(eyeRightX - eyeRadius, cy - 2 + yo, eyeRadius*2, 4, eyeColor);
         }
         else {
             // Normal IDLE / MOVING
-            _canvas.fillCircle(eyeLeftX + xo, cy + yo, 15, eyeColor);
-            _canvas.fillCircle(eyeRightX + xo, cy + yo, 15, eyeColor);
-            _canvas.fillCircle(eyeLeftX + xo + xo/2, cy + yo + yo/2, 5, TFT_BLACK);
-            _canvas.fillCircle(eyeRightX + xo + xo/2, cy + yo + yo/2, 5, TFT_BLACK);
+            _canvas.fillCircle(eyeLeftX + xo, cy + yo, eyeRadius, eyeColor);
+            _canvas.fillCircle(eyeRightX + xo, cy + yo, eyeRadius, eyeColor);
+            _canvas.fillCircle(eyeLeftX + xo + xo/2, cy + yo + yo/2, eyeRadius/3, TFT_BLACK);
+            _canvas.fillCircle(eyeRightX + xo + xo/2, cy + yo + yo/2, eyeRadius/3, TFT_BLACK);
+        }
+
+        // Gender specific details
+        if (faceType == 1 && _currentEmotion != ERROR) {
+            // Girl: Eyelashes
+            if (!_isBlinking) {
+                _canvas.drawLine(eyeLeftX + xo - eyeRadius + 3, cy + yo - eyeRadius + 5, eyeLeftX + xo - eyeRadius - 6, cy + yo - eyeRadius - 4, accent);
+                _canvas.drawLine(eyeLeftX + xo - eyeRadius + 8, cy + yo - eyeRadius + 2, eyeLeftX + xo - eyeRadius - 1, cy + yo - eyeRadius - 7, accent);
+                _canvas.drawLine(eyeRightX + xo + eyeRadius - 3, cy + yo - eyeRadius + 5, eyeRightX + xo + eyeRadius + 6, cy + yo - eyeRadius - 4, accent);
+                _canvas.drawLine(eyeRightX + xo + eyeRadius - 8, cy + yo - eyeRadius + 2, eyeRightX + xo + eyeRadius + 1, cy + yo - eyeRadius - 7, accent);
+            }
+            // Hair Bow
+            int bowY = 18;
+            uint32_t bowColor = M5.Display.color565(255, 100, 180); // Pinkish bow
+            _canvas.fillTriangle(cx, bowY, cx - 12, bowY - 8, cx - 12, bowY + 8, bowColor);
+            _canvas.fillTriangle(cx, bowY, cx + 12, bowY - 8, cx + 12, bowY + 8, bowColor);
+            _canvas.fillCircle(cx, bowY, 3, TFT_WHITE);
+        } else if (faceType == 0 && _currentEmotion != ERROR) {
+            // Boy: Simple Cap Brim or thicker features.
+            // Let's add a backwards cap rim at the top
+            _canvas.fillRoundRect(cx - 30, 8, 60, 6, 3, accent);
+            _canvas.fillRoundRect(cx + 10, 10, 25, 10, 3, accent); // brim
         }
 
         // Draw Mouth

@@ -243,11 +243,13 @@ input[type=text],input[type=password],select{width:100%;box-sizing:border-box;pa
         </div>
         <!-- Compass -->
         <div class="compass-box">
-          <svg viewBox="0 0 100 100" id="compass-svg">
+          <svg viewBox="0 0 100 100" id="compass-svg" style="cursor:crosshair">
             <circle cx="50" cy="50" r="45" fill="none" stroke="rgba(0,240,255,0.15)" stroke-width="2"/>
             <text x="50" y="12" text-anchor="middle" fill="var(--accent)" font-size="10" font-family="Orbitron">N</text>
             <line x1="50" y1="50" x2="50" y2="20" stroke="var(--accent)" stroke-width="2" id="compass-needle"
               style="transform-origin:50px 50px;transition:transform .15s"/>
+            <line x1="50" y1="50" x2="50" y2="20" stroke="var(--magenta)" stroke-width="2" id="compass-target" stroke-dasharray="3,3"
+              style="transform-origin:50px 50px;transition:transform .15s; display:none;"/>
           </svg>
         </div>
         <!-- Steer Indicator -->
@@ -381,13 +383,32 @@ input[type=text],input[type=password],select{width:100%;box-sizing:border-box;pa
     <div style="display:flex;flex-direction:column;gap:8px;">
       <input type="text" id="cfg-name" placeholder="Robot Name" maxlength="16">
       <select id="cfg-color">
-        <option value="0">🔵 Cyber Blue (Boy)</option>
-        <option value="1">🩷 Neon Pink (Girl)</option>
+        <option value="0">🔵 Cyber Blue</option>
+        <option value="1">🩷 Neon Pink</option>
         <option value="2">💚 Hacker Green</option>
         <option value="3">🧡 Blaze Orange</option>
       </select>
       <button class="act act-spin" onclick="saveName()" style="width:100%;padding:10px;">💾 SAVE IDENTITY</button>
     </div>
+  </div>
+
+  <div class="pnl">
+    <div class="corner-bl"></div><div class="corner-br"></div>
+    <div class="pnl-title">Face Settings</div>
+    
+    <div class="cfg-row" style="padding-top:0">
+      <span class="cfg-row-label">Face Style</span>
+      <select id="cfg-faceType" onchange="sendFaceCfg()" style="width:120px">
+        <option value="0">Boy</option>
+        <option value="1">Girl</option>
+      </select>
+    </div>
+    <div class="cfg-label" style="margin-top:10px"><span>Eye Size</span><span class="cfg-val" id="fEye-v">15</span></div>
+    <input type="range" id="cfg-fEye" min="10" max="25" value="15" onchange="sendFaceCfg()">
+    <div class="cfg-label"><span>Blink Speed</span><span class="cfg-val" id="fBlink-v">50</span></div>
+    <input type="range" id="cfg-fBlink" min="0" max="100" value="50" onchange="sendFaceCfg()">
+    <div class="cfg-label"><span>Bounciness</span><span class="cfg-val" id="fBounce-v">50</span></div>
+    <input type="range" id="cfg-fBounce" min="0" max="100" value="50" onchange="sendFaceCfg()">
   </div>
 
   <div class="pnl">
@@ -550,6 +571,16 @@ function wsConnect(){
       const needle = document.getElementById('compass-needle');
       if(needle) needle.style.transform = 'rotate('+hdg+'deg)';
 
+      const targetNeedle = document.getElementById('compass-target');
+      if(targetNeedle) {
+        if(d.hdgLck !== undefined && d.hdgLck >= 0) {
+           targetNeedle.style.display = 'block';
+           targetNeedle.style.transform = 'rotate('+(d.hdgLck/10).toFixed(0)+'deg)';
+        } else {
+           targetNeedle.style.display = 'none';
+        }
+      }
+
       // Pitch
       document.getElementById('tv-pitch').textContent=(d.p/10).toFixed(1);
 
@@ -586,6 +617,16 @@ function wsConnect(){
         // Apply identity
         document.getElementById('robot-logo').textContent = '🤖 ' + d.name.toUpperCase();
         applyTheme(d.color);
+        
+        if(d.fType !== undefined) {
+             document.getElementById('cfg-faceType').value = d.fType;
+             document.getElementById('cfg-fEye').value = d.fEye;
+             document.getElementById('fEye-v').textContent = d.fEye;
+             document.getElementById('cfg-fBlink').value = d.fBlink;
+             document.getElementById('fBlink-v').textContent = d.fBlink;
+             document.getElementById('cfg-fBounce').value = d.fBounce;
+             document.getElementById('fBounce-v').textContent = d.fBounce;
+        }
       }
     }catch(ex){}
   };
@@ -644,6 +685,24 @@ function joyReset(){
   updateGauge('svg-steer', 0);
   Object.values(arrows).forEach(a=>a.classList.remove('lit'));
   wsSend({c:'m',t:0,s:0});
+}
+
+// ===== COMPASS INTERACTION =====
+const compSvg = document.getElementById('compass-svg');
+if (compSvg) {
+  compSvg.addEventListener('pointerdown', (e) => {
+    const rect = compSvg.getBoundingClientRect();
+    const x = e.clientX - rect.left - rect.width/2;
+    const y = e.clientY - rect.top - rect.height/2;
+    let angle = Math.atan2(x, -y) * 180 / Math.PI;
+    if (angle < 0) angle += 360;
+    wsSend({c:'hdg', h:angle, active:1});
+    logMission('🧭 Heading Lock: ' + Math.round(angle) + '°');
+  });
+  compSvg.addEventListener('dblclick', () => {
+    wsSend({c:'hdg', h:0, active:0});
+    logMission('🧭 Heading Lock: OFF');
+  });
 }
 
 joy.addEventListener('pointerdown',e=>{joyActive=true;thumb.classList.add('active');joy.setPointerCapture(e.pointerId);joyMove(e.clientX,e.clientY);});
@@ -740,6 +799,19 @@ function sendCfg(){
     servoMax:parseInt(document.getElementById('servomax').value),
     stealth:document.getElementById('cfg-stealth').checked?1:0
   });
+}
+
+function sendFaceCfg(){
+  const ft = parseInt(document.getElementById('cfg-faceType').value);
+  const fe = parseInt(document.getElementById('cfg-fEye').value);
+  const fb = parseInt(document.getElementById('cfg-fBlink').value);
+  const fbo = parseInt(document.getElementById('cfg-fBounce').value);
+  
+  document.getElementById('fEye-v').textContent = fe;
+  document.getElementById('fBlink-v').textContent = fb;
+  document.getElementById('fBounce-v').textContent = fbo;
+  
+  wsSend({c:'faceCfg', type:ft, eye:fe, blink:fb, bounce:fbo});
 }
 
 // ===== IDENTITY =====
