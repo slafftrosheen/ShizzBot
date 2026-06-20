@@ -1,6 +1,7 @@
 // ============================================================
-// ShizzBot - Main Firmware v2
-// WebSocket control, IMU self-balancing, telemetry push
+// ShizzBot Swarm - Main Firmware v3
+// Single motor + steering servo + 3 arm servos
+// WebSocket control, IMU heading, robot identity
 // ============================================================
 #include <M5Unified.h>
 #include <WiFi.h>
@@ -8,6 +9,7 @@
 #include <ArduinoJson.h>
 #include "roller_can.h"
 #include "imu_filter.h"
+#include "servo_control.h"
 #include "webui.h"
 #include <ESPmDNS.h>
 #include <ElegantOTA.h>
@@ -19,7 +21,11 @@
 Preferences prefs;
 bool configDirty = false;
 
-// ===== PHASE 6 GLOBALS =====
+// ===== ROBOT IDENTITY =========================================
+String robotName = "ShizzBot";
+int robotColor = 0;    // 0=cyan(boy), 1=magenta(girl), 2=lime, 3=orange
+
+// ===== MODES ==================================================
 bool stealthMode = false;
 bool isDancing = false;
 unsigned long danceStartTime = 0;
@@ -30,57 +36,43 @@ String wifiPass;
 
 #define I2C_SDA  9
 #define I2C_SCL  10
-#define MOTOR_L_ADDR 0x64
-#define MOTOR_R_ADDR 0x65
+#define MOTOR_ADDR 0x64   // Single rear-axle motor
 
 // ===== GLOBALS ================================================
-RollerCAN motorL(MOTOR_L_ADDR);
-RollerCAN motorR(MOTOR_R_ADDR);
+RollerCAN motor(MOTOR_ADDR);
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 
 SoundEngine soundEngine;
 RobotFace robotFace;
 IRControl irControl;
+ServoController servos;
 
-// Drive state
-enum DriveMode { DRIVE_SKID, DRIVE_BALANCE };
-DriveMode driveMode = DRIVE_SKID;
-
-int32_t cmdL = 0, cmdR = 0;         // -100..100 from UI
-int32_t actualOutL = 0, actualOutR = 0;  // what we send to motors
-int32_t maxRpm = 3000;
+// Drive state (single motor + steering)
+int32_t cmdThrottle = 0;  // -100..100 from joystick Y
+int32_t cmdSteer = 0;     // -100..100 from joystick X
+int32_t actualOut = 0;    // what we send to motor
+int32_t maxRpm = 1500;
 unsigned long lastCmdTime = 0;
 const unsigned long CMD_TIMEOUT = 1500;
 
-// Telemetry (raw from registers)
-int32_t telVoltMV  = 0;    // millivolts
-int32_t telTempRaw = 0;    // °C * 10
-int32_t telRpmL = 0, telRpmR = 0;
-int32_t telCurL = 0, telCurR = 0;  // milliamps
+// Telemetry
+int32_t telVoltMV  = 0;
+int32_t telTempRaw = 0;
+int32_t telRpm = 0;
+int32_t telCur = 0;
 
-// IMU + Balance
+// IMU
 IMUFilter imuFilter;
-PIDController balancePID;
 float imuPitch = 0, imuRoll = 0;
 unsigned long lastImuUs = 0;
-int32_t balanceSteer = 0;  // differential from joystick X during balance
 
-bool motorLOk = false, motorROk = false;
+bool motorOk = false;
+
+// Gamification
+int32_t score = 0;
 
 // ===== DISPLAY ================================================
-void drawBoot() {
-    M5.Display.fillScreen(TFT_BLACK);
-    M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
-    M5.Display.setTextSize(2);
-    M5.Display.setCursor(6, 8);
-    M5.Display.print("ShizzBot");
-    M5.Display.setTextSize(1);
-    M5.Display.setTextColor(0x7BEF); // grey
-    M5.Display.setCursor(6, 32);
-    M5.Display.print("v2.0 booting...");
-}
-
 void drawStatus(const char* msg) {
     M5.Display.fillRect(0, 50, M5.Display.width(), 20, TFT_BLACK);
     M5.Display.setTextSize(1);
@@ -89,69 +81,34 @@ void drawStatus(const char* msg) {
     M5.Display.print(msg);
 }
 
-void drawRunningScreen(const char* ip) {
-    M5.Display.fillScreen(TFT_BLACK);
-    M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
-    M5.Display.setTextSize(1.5);
-    M5.Display.setCursor(4, 2);
-    M5.Display.print("ShizzBot");
-    M5.Display.setTextSize(1);
-    M5.Display.setTextColor(TFT_GREEN, TFT_BLACK);
-    M5.Display.setCursor(4, 22);
-    M5.Display.printf("http://%s", ip);
-}
-
-void updateOLED() {
-    static unsigned long lastUp = 0;
-    if (millis() - lastUp < 500) return;
-    lastUp = millis();
-
-    int y = 42;
-    M5.Display.fillRect(0, y, M5.Display.width(), M5.Display.height() - y, TFT_BLACK);
-    M5.Display.setTextSize(1);
-    M5.Display.setCursor(4, y);
-
-    M5.Display.setTextColor(TFT_WHITE);
-    M5.Display.printf("L:%4d R:%4d\n", actualOutL, actualOutR);
-    M5.Display.setCursor(4, y + 14);
-    M5.Display.printf("RPM %4d | %4d\n", telRpmL, telRpmR);
-    M5.Display.setCursor(4, y + 28);
-    M5.Display.setTextColor(TFT_YELLOW);
-    M5.Display.printf("%.1fV  %.1fC", telVoltMV / 1000.0, telTempRaw / 10.0);
-    M5.Display.setCursor(4, y + 42);
-    M5.Display.setTextColor(driveMode == DRIVE_BALANCE ? TFT_MAGENTA : TFT_GREEN);
-    M5.Display.print(driveMode == DRIVE_BALANCE ? "BALANCE" : "SKID");
-}
-
 // ===== MOTOR CONTROL ==========================================
-void applyMotors(int32_t outL, int32_t outR) {
-    actualOutL = outL;
-    actualOutR = outR;
-    int32_t rpmL = (outL * maxRpm) / 100;
-    int32_t rpmR = (outR * maxRpm) / 100;
-    if (motorLOk) motorL.setSpeed(rpmL);
-    if (motorROk) motorR.setSpeed(rpmR);
+void applyMotor(int32_t throttle) {
+    actualOut = throttle;
+    int32_t rpm = (throttle * maxRpm) / 100;
+    if (motorOk) motor.setSpeed(rpm);
 }
 
 void emergencyStop() {
-    cmdL = 0; cmdR = 0;
-    actualOutL = 0; actualOutR = 0;
-    balancePID.reset();
-    if (motorLOk) { motorL.stop(); motorL.setRGB(255, 0, 0, 60); }
-    if (motorROk) { motorR.stop(); motorR.setRGB(255, 0, 0, 60); }
-    // Re-enable output after stop so next command works
+    cmdThrottle = 0; cmdSteer = 0;
+    actualOut = 0;
+    servos.stopAll();
+    if (motorOk) { motor.stop(); motor.setRGB(255, 0, 0, 60); }
     delay(10);
-    if (motorLOk) { motorL.setMode(ROLLER_MODE_SPEED); motorL.setOutput(true); }
-    if (motorROk) { motorR.setMode(ROLLER_MODE_SPEED); motorR.setOutput(true); }
+    if (motorOk) { motor.setMode(ROLLER_MODE_SPEED); motor.setOutput(true); }
 }
 
 // ===== IMU ====================================================
 void readIMU() {
-    M5.Imu.update(); // Fetch fresh data!
+    M5.Imu.update();
     auto data = M5.Imu.getImuData();
     unsigned long nowUs = micros();
     float dt = (lastImuUs == 0) ? 0 : (nowUs - lastImuUs) / 1000000.0f;
     lastImuUs = nowUs;
+
+    if (!imuFilter.calibrated) {
+        imuFilter.calibrate(data.gyro.x, data.gyro.y, data.gyro.z);
+        return;
+    }
 
     imuFilter.update(data.accel.x, data.accel.y, data.accel.z,
                      data.gyro.x,  data.gyro.y,  data.gyro.z, dt);
@@ -159,45 +116,13 @@ void readIMU() {
     imuRoll  = imuFilter.roll;
 }
 
-// ===== SELF-BALANCE LOOP ======================================
-void balanceLoop(float dt) {
-    // Add joystick steering as differential
-    int32_t steer = cmdL;  // in balance mode, UI sends steer in cmdL, throttle in cmdR
-    int32_t lean  = cmdR;  // forward lean offset
-
-    // Apply lean offset as setpoint shift (forward lean = robot moves forward)
-    float leanAngle = lean * 0.15f;  // max ±15° lean from joystick
-    
-    // PID computes motor power to maintain upright (pitch ≈ leanAngle)
-    // We pass imuFilter.gyroRatePitch as the derivative term for a much smoother response
-    float pidOut = balancePID.compute(leanAngle, imuPitch, imuFilter.gyroRatePitch, dt);
-
-    int32_t outL = (int32_t)pidOut + steer;
-    int32_t outR = (int32_t)pidOut - steer;
-    outL = constrain(outL, -100, 100);
-    outR = constrain(outR, -100, 100);
-
-    // Tip-over protection: if pitch > 45°, give up
-    if (fabsf(imuPitch) > 45.0f) {
-        outL = 0; outR = 0;
-    }
-
-    applyMotors(outL, outR);
-}
-
-// ===== FREERTOS BALANCE TASK ==================================
-void balanceTask(void *pvParameters) {
+// ===== IMU TASK (FreeRTOS Core 1) =============================
+void imuTask(void *pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    const TickType_t xFrequency = pdMS_TO_TICKS(5); // exactly 5ms (200Hz)
+    const TickType_t xFrequency = pdMS_TO_TICKS(5); // 200Hz
 
     for (;;) {
-        // Always read IMU
         readIMU();
-
-        if (driveMode == DRIVE_BALANCE) {
-            balanceLoop(0.005f); // exactly 5ms
-        }
-
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
 }
@@ -214,55 +139,87 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
     else if (type == WS_EVT_DATA) {
         AwsFrameInfo *info = (AwsFrameInfo*)arg;
         if (info->opcode == WS_TEXT && info->final && info->index == 0 && info->len == len) {
-            data[len] = 0; // null-terminate
+            data[len] = 0;
             JsonDocument doc;
             if (deserializeJson(doc, (char*)data)) return;
 
             const char* cmd = doc["c"];
             if (!cmd) return;
 
+            // === DRIVE (throttle + steering) ===
             if (strcmp(cmd, "m") == 0) {
-                cmdL = constrain((int)doc["l"], -100, 100);
-                cmdR = constrain((int)doc["r"], -100, 100);
+                cmdThrottle = constrain((int)doc["t"], -100, 100);
+                cmdSteer = constrain((int)doc["s"], -100, 100);
                 lastCmdTime = millis();
-                if (driveMode == DRIVE_SKID) {
-                    applyMotors(cmdL, cmdR);
-                }
-                // In balance mode, cmdL/cmdR are used as steer/lean inputs
+                applyMotor(cmdThrottle);
+                servos.setSteer(cmdSteer);
             }
+            // === EMERGENCY STOP ===
             else if (strcmp(cmd, "stop") == 0) {
                 emergencyStop();
                 Serial.println("[!] WS Emergency Stop");
             }
+            // === CONFIG ===
             else if (strcmp(cmd, "cfg") == 0) {
-                bool bal = doc["bal"] == 1;
-                DriveMode newMode = bal ? DRIVE_BALANCE : DRIVE_SKID;
-                if (newMode != driveMode) {
-                    driveMode = newMode;
-                    balancePID.reset();
-                    cmdL = 0; cmdR = 0;
-                    if (driveMode == DRIVE_SKID) applyMotors(0, 0);
-                    Serial.printf("[Mode] %s\n", bal ? "BALANCE" : "SKID");
+                bool invMotor = doc["invM"] == 1;
+                motor.setInverted(invMotor);
+                servos.invertSteer = (doc["invS"] == 1);
+
+                if (doc["maxSp"].is<int>()) {
+                    maxRpm = (int)doc["maxSp"] * 30;
                 }
-                bool invL = doc["invL"] == 1;
-                bool invR = doc["invR"] == 1;
-                motorL.setInverted(invL);
-                motorR.setInverted(invR);
-                
-                if (doc.containsKey("maxSp")) {
-                    maxRpm = (int)doc["maxSp"] * 30; // maxRpm max is 3000
+                if (doc["servoMax"].is<int>()) {
+                    servos.maxServoSpeed = constrain((int)doc["servoMax"], 10, 100);
                 }
-                
                 configDirty = true;
             }
-            else if (strcmp(cmd, "pid") == 0) {
-                balancePID.kp = doc["kp"] | 12.0f;
-                balancePID.ki = doc["ki"] | 0.4f;
-                balancePID.kd = doc["kd"] | 0.6f;
-                Serial.printf("[PID] Kp=%.1f Ki=%.1f Kd=%.1f\n",
-                    balancePID.kp, balancePID.ki, balancePID.kd);
+            // === ROBOT IDENTITY ===
+            else if (strcmp(cmd, "name") == 0) {
+                const char* n = doc["n"];
+                if (n && strlen(n) > 0 && strlen(n) <= 16) {
+                    robotName = String(n);
+                    robotFace.robotName = robotName;
+                    prefs.putString("name", robotName);
+                    // Update mDNS
+                    MDNS.end();
+                    String hostname = robotName;
+                    hostname.toLowerCase();
+                    hostname.replace(" ", "");
+                    MDNS.begin(hostname.c_str());
+                    Serial.printf("[ID] Robot renamed to: %s (mDNS: %s.local)\n", 
+                                  robotName.c_str(), hostname.c_str());
+                    configDirty = true;
+                }
+            }
+            else if (strcmp(cmd, "color") == 0) {
+                robotColor = constrain((int)doc["v"], 0, 3);
+                robotFace.robotColor = robotColor;
+                prefs.putInt("color", robotColor);
+                Serial.printf("[ID] Robot color set to: %d\n", robotColor);
                 configDirty = true;
             }
+            // === ARM SERVOS ===
+            else if (strcmp(cmd, "arm") == 0) {
+                int base = doc["b"] | 0;
+                int lift = doc["l"] | 0;
+                int grip = doc["g"] | 0;
+                servos.setArm(base, lift, grip);
+            }
+            else if (strcmp(cmd, "armPreset") == 0) {
+                const char* p = doc["p"];
+                if (p) {
+                    if (strcmp(p, "park") == 0)    servos.presetPark();
+                    else if (strcmp(p, "grab") == 0)    servos.presetGrab();
+                    else if (strcmp(p, "wave") == 0)    servos.presetWave();
+                    else if (strcmp(p, "release") == 0) servos.presetRelease();
+                    score += 5;
+                }
+            }
+            // === HEADING CALIBRATE ===
+            else if (strcmp(cmd, "zero") == 0) {
+                imuFilter.resetHeading();
+            }
+            // === SOUNDS ===
             else if (strcmp(cmd, "snd") == 0) {
                 const char* s = doc["s"];
                 if (s) {
@@ -270,8 +227,10 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
                     else if (strcmp(s, "chirp") == 0) soundEngine.playChirp();
                     else if (strcmp(s, "scan") == 0) soundEngine.playScan();
                     else if (strcmp(s, "err") == 0) soundEngine.playError();
+                    score += 1;
                 }
             }
+            // === EMOTES ===
             else if (strcmp(cmd, "emo") == 0) {
                 const char* e = doc["e"];
                 if (e) {
@@ -280,25 +239,28 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
                     else if (strcmp(e, "dizzy") == 0) robotFace.setEmotion(RobotFace::DIZZY);
                     else if (strcmp(e, "surprised") == 0) robotFace.setEmotion(RobotFace::SURPRISED);
                     else if (strcmp(e, "idle") == 0) robotFace.setEmotion(RobotFace::IDLE);
+                    score += 2;
                 }
             }
+            // === DANCE ===
             else if (strcmp(cmd, "dance") == 0) {
                 isDancing = true;
                 danceStartTime = millis();
+                score += 10;
                 Serial.println("[!] DANCE MODE ACTIVATED");
             }
+            // === STEALTH ===
             else if (strcmp(cmd, "stealth") == 0) {
                 stealthMode = (doc["v"] == 1);
                 M5.Display.setBrightness(stealthMode ? 0 : 255);
                 if (stealthMode) {
-                    if (motorLOk) motorL.setRGB(0, 0, 0, 0);
-                    if (motorROk) motorR.setRGB(0, 0, 0, 0);
+                    if (motorOk) motor.setRGB(0, 0, 0, 0);
                 } else {
-                    if (motorLOk) motorL.setRGB(0, 60, 0, 20);
-                    if (motorROk) motorR.setRGB(0, 60, 0, 20);
+                    if (motorOk) motor.setRGB(0, 60, 0, 20);
                 }
                 configDirty = true;
             }
+            // === WIFI ===
             else if (strcmp(cmd, "wifi") == 0) {
                 const char* s = doc["s"];
                 const char* p = doc["p"];
@@ -314,33 +276,43 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
     }
 }
 
-// Push to websocket AND update WebUI config on connection
+// Push telemetry
 void pushTelemetry() {
     if (ws.count() == 0) return;
 
-    char buf[400];
+    char buf[512];
     snprintf(buf, sizeof(buf),
-        "{\"v\":%d,\"t\":%d,\"sl\":%d,\"sr\":%d,\"cl\":%d,\"cr\":%d,"
-        "\"p\":%d,\"r\":%d,\"m\":\"%s\","
+        "{\"v\":%d,\"t\":%d,\"rpm\":%d,\"cur\":%d,"
+        "\"p\":%d,\"r\":%d,\"hdg\":%d,"
         "\"ip\":\"%s\",\"ssid\":\"%s\",\"rssi\":%d,\"wc\":%u,\"batt\":%d,"
-        "\"kp\":%.1f,\"ki\":%.1f,\"kd\":%.1f,\"maxSp\":%d,\"invL\":%d,\"invR\":%d,\"stealth\":%d}",
+        "\"maxSp\":%d,\"invM\":%d,\"invS\":%d,\"stealth\":%d,"
+        "\"name\":\"%s\",\"color\":%d,\"score\":%d,"
+        "\"steer\":%d,\"armB\":%d,\"armL\":%d,\"grip\":%d,"
+        "\"servoMax\":%d}",
         telVoltMV,
         telTempRaw,
-        telRpmL, telRpmR,
-        telCurL, telCurR,
-        (int)(imuPitch * 10),   // send as °*10 int
+        telRpm,
+        telCur,
+        (int)(imuPitch * 10),
         (int)(imuRoll * 10),
-        driveMode == DRIVE_BALANCE ? "balance" : "skid",
+        (int)(imuFilter.heading * 10),
         WiFi.localIP().toString().c_str(),
         WiFi.SSID().c_str(),
         WiFi.RSSI(),
         ws.count(),
         M5.Power.getBatteryLevel(),
-        balancePID.kp, balancePID.ki, balancePID.kd,
-        maxRpm / 30, // send back as percentage (0-100)
-        motorLOk ? motorL.getInverted() : 0,
-        motorROk ? motorR.getInverted() : 0,
-        stealthMode ? 1 : 0
+        maxRpm / 30,
+        motorOk ? motor.getInverted() : 0,
+        servos.invertSteer ? 1 : 0,
+        stealthMode ? 1 : 0,
+        robotName.c_str(),
+        robotColor,
+        score,
+        servos.steerSpeed,
+        servos.armBaseSpeed,
+        servos.armLiftSpeed,
+        servos.gripSpeed,
+        servos.maxServoSpeed
     );
     ws.textAll(buf);
 }
@@ -348,72 +320,63 @@ void pushTelemetry() {
 // ===== SETUP ==================================================
 void setup() {
     auto cfg = M5.config();
-    cfg.internal_imu = true;  // enable BMI270
+    cfg.internal_imu = true;
     M5.begin(cfg);
-    
+
     soundEngine.init();
     robotFace.init();
     irControl.init();
-    
+
     soundEngine.playStartup();
-    
-    // Disable text boot screen, show face instead
-    // drawBoot(); 
 
     Serial.begin(115200);
-    Serial.println("\n[ShizzBot v2] Starting...");
+    Serial.println("\n[ShizzBot Swarm v3] Starting...");
 
     // Load Config
     prefs.begin("shizzbot", false);
-    driveMode = (DriveMode)prefs.getInt("driveMode", DRIVE_SKID);
-    balancePID.kp = prefs.getFloat("kp", 12.0f);
-    balancePID.ki = prefs.getFloat("ki", 0.4f);
-    balancePID.kd = prefs.getFloat("kd", 0.6f);
     maxRpm = prefs.getInt("maxRpm", 1500);
-
-    // Default right motor to inverted if not set in prefs (for opposite facing wheels)
-    bool defaultInvR = !prefs.isKey("invR") ? true : prefs.getBool("invR");
-    bool defaultInvL = prefs.getBool("invL", false);
     stealthMode = prefs.getBool("stealth", false);
     if (stealthMode) M5.Display.setBrightness(0);
+
+    // Robot Identity
+    robotName = prefs.getString("name", "ShizzBot");
+    robotColor = prefs.getInt("color", 0);
+    robotFace.robotName = robotName;
+    robotFace.robotColor = robotColor;
+    Serial.printf("[ID] Robot: %s (color=%d)\n", robotName.c_str(), robotColor);
 
     wifiSSID = prefs.getString("ssid", "Sinstro_HomeLab");
     wifiPass = prefs.getString("pass", "Dev18118810208");
 
     // I2C
     Wire.begin(I2C_SDA, I2C_SCL);
-    Wire.setClock(100000);  // 100kHz for stability
+    Wire.setClock(100000);
     delay(100);
 
-    // Motors
-    drawStatus("Motors...");
-    motorLOk = motorL.begin();
-    motorROk = motorR.begin();
-    Serial.printf("[Motors] L@0x%02X:%s  R@0x%02X:%s\n",
-        MOTOR_L_ADDR, motorLOk ? "OK" : "FAIL",
-        MOTOR_R_ADDR, motorROk ? "OK" : "FAIL");
+    // Motor (single rear-axle)
+    drawStatus("Motor...");
+    motorOk = motor.begin();
+    Serial.printf("[Motor] @0x%02X: %s\n", MOTOR_ADDR, motorOk ? "OK" : "FAIL");
 
-    if (motorLOk) {
-        motorL.setMode(ROLLER_MODE_SPEED); delay(5);
-        motorL.setOutput(true); delay(5);
-        motorL.setStallProtection(true); delay(5);
-        motorL.setMaxSpeed(3000); delay(5);
-        motorL.setInverted(defaultInvL);
-        if (!stealthMode) motorL.setRGB(0, 60, 0, 20);
-        else motorL.setRGB(0,0,0,0);
-    }
-    if (motorROk) {
-        motorR.setMode(ROLLER_MODE_SPEED); delay(5);
-        motorR.setOutput(true); delay(5);
-        motorR.setStallProtection(true); delay(5);
-        motorR.setMaxSpeed(3000); delay(5);
-        motorR.setInverted(defaultInvR);
-        if (!stealthMode) motorR.setRGB(0, 60, 0, 20);
-        else motorR.setRGB(0,0,0,0);
+    if (motorOk) {
+        motor.setMode(ROLLER_MODE_SPEED); delay(5);
+        motor.setOutput(true); delay(5);
+        motor.setStallProtection(true); delay(5);
+        motor.setMaxSpeed(3000); delay(5);
+        bool defaultInv = prefs.getBool("invM", false);
+        motor.setInverted(defaultInv);
+        if (!stealthMode) motor.setRGB(0, 60, 0, 20);
+        else motor.setRGB(0,0,0,0);
     }
 
-    // Start FreeRTOS Balance Task on Core 1 (App Core)
-    xTaskCreatePinnedToCore(balanceTask, "Balance", 4096, NULL, 5, NULL, 1);
+    // Servos
+    drawStatus("Servos...");
+    servos.invertSteer = prefs.getBool("invS", false);
+    servos.maxServoSpeed = prefs.getInt("servoMax", 70);
+    servos.init();
+
+    // IMU Task on Core 1 (200Hz)
+    xTaskCreatePinnedToCore(imuTask, "IMU", 4096, NULL, 5, NULL, 1);
 
     // WiFi
     drawStatus("WiFi...");
@@ -427,8 +390,11 @@ void setup() {
     if (WiFi.status() == WL_CONNECTED) {
         ip = WiFi.localIP().toString();
         Serial.printf("\n[WiFi] STA IP: %s\n", ip.c_str());
-        if (MDNS.begin("shizzbot")) {
-            Serial.println("[mDNS] shizzbot.local started");
+        String hostname = robotName;
+        hostname.toLowerCase();
+        hostname.replace(" ", "");
+        if (MDNS.begin(hostname.c_str())) {
+            Serial.printf("[mDNS] %s.local started\n", hostname.c_str());
         }
     } else {
         Serial.println("\n[WiFi] STA fail -> AP mode");
@@ -436,8 +402,6 @@ void setup() {
         ip = WiFi.softAPIP().toString();
         Serial.printf("[WiFi] AP IP: %s\n", ip.c_str());
     }
-    // We use the robot face now instead of text screens
-    // drawRunningScreen(ip.c_str());
 
     // WebSocket
     ws.onEvent(onWsEvent);
@@ -446,7 +410,6 @@ void setup() {
     // HTTP: serve WebUI
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *req) {
         AsyncWebServerResponse *response = req->beginResponse(200, "text/html", WEBUI_HTML);
-        // Prevent aggressive mobile browser caching of the UI
         response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
         response->addHeader("Pragma", "no-cache");
         response->addHeader("Expires", "-1");
@@ -456,7 +419,7 @@ void setup() {
     ElegantOTA.begin(&server);
 
     server.begin();
-    Serial.println("[ShizzBot v2] Ready!");
+    Serial.println("[ShizzBot Swarm v3] Ready!");
 }
 
 // ===== LOOP ===================================================
@@ -473,22 +436,25 @@ void loop() {
     // IR Control
     char irCmd = irControl.update();
     if (irCmd) {
-        if (irCmd == 'F') { cmdL = 100; cmdR = 100; }
-        else if (irCmd == 'B') { cmdL = -100; cmdR = -100; }
-        else if (irCmd == 'L') { cmdL = -100; cmdR = 100; }
-        else if (irCmd == 'R') { cmdL = 100; cmdR = -100; }
-        else if (irCmd == 'S') { cmdL = 0; cmdR = 0; }
+        if (irCmd == 'F') { cmdThrottle = 100; cmdSteer = 0; }
+        else if (irCmd == 'B') { cmdThrottle = -100; cmdSteer = 0; }
+        else if (irCmd == 'L') { cmdThrottle = 0; cmdSteer = -80; }
+        else if (irCmd == 'R') { cmdThrottle = 0; cmdSteer = 80; }
+        else if (irCmd == 'S') { cmdThrottle = 0; cmdSteer = 0; }
         lastCmdTime = millis();
-        if (driveMode == DRIVE_SKID) applyMotors(cmdL, cmdR);
+        applyMotor(cmdThrottle);
+        servos.setSteer(cmdSteer);
         robotFace.setEmotion(RobotFace::MOVING);
     }
 
-    // FreeRTOS task handles IMU and Balancing now
     // Sound engine
     soundEngine.update();
 
-    // Command timeout safety
-    if (millis() - lastCmdTime > CMD_TIMEOUT && (cmdL != 0 || cmdR != 0) && !isDancing) {
+    // Servo safety timeout
+    servos.update();
+
+    // Motor command timeout
+    if (millis() - lastCmdTime > CMD_TIMEOUT && (cmdThrottle != 0 || cmdSteer != 0) && !isDancing) {
         Serial.println("[!] Timeout -> stop");
         emergencyStop();
     }
@@ -498,51 +464,54 @@ void loop() {
     if (millis() - lastBattCheck > 5000) {
         lastBattCheck = millis();
         int batt = M5.Power.getBatteryLevel();
-        if (batt < 20 && actualOutL == 0 && actualOutR == 0 && !isDancing) {
+        if (batt < 20 && actualOut == 0 && !isDancing) {
             robotFace.setEmotion(RobotFace::SLEEPY);
-            if (random(100) < 10 && !stealthMode) soundEngine.playError(); // Occasional groan
+            if (random(100) < 10 && !stealthMode) soundEngine.playError();
         } else if (batt >= 20 && robotFace.getEmotion() == RobotFace::SLEEPY) {
             robotFace.setEmotion(RobotFace::IDLE);
         }
     }
 
-    // Dance Macro
+    // Dance Macro (single motor + steering)
     if (isDancing) {
         unsigned long t = millis() - danceStartTime;
         if (t < 800) {
-            cmdL = 100; cmdR = -100; robotFace.setEmotion(RobotFace::SURPRISED);
+            cmdThrottle = 50; servos.setSteer(100);
+            robotFace.setEmotion(RobotFace::SURPRISED);
             if (t == 0 && !stealthMode) soundEngine.playChirp();
         } else if (t < 1600) {
-            cmdL = -100; cmdR = 100; robotFace.setEmotion(RobotFace::HAPPY);
+            cmdThrottle = 50; servos.setSteer(-100);
+            robotFace.setEmotion(RobotFace::HAPPY);
         } else if (t < 2200) {
-            cmdL = 100; cmdR = 100; robotFace.setEmotion(RobotFace::ANGRY);
-            if (t == 1600 && !stealthMode) soundEngine.playHorn();
+            cmdThrottle = 100; servos.setSteer(0);
+            robotFace.setEmotion(RobotFace::ANGRY);
+            if (t >= 1600 && t < 1610 && !stealthMode) soundEngine.playHorn();
         } else if (t < 2800) {
-            cmdL = -100; cmdR = -100; robotFace.setEmotion(RobotFace::DIZZY);
+            cmdThrottle = -80; servos.setSteer(0);
+            robotFace.setEmotion(RobotFace::DIZZY);
         } else {
-            cmdL = 0; cmdR = 0; isDancing = false; robotFace.setEmotion(RobotFace::IDLE);
+            cmdThrottle = 0; cmdSteer = 0;
+            servos.setSteer(0);
+            isDancing = false;
+            robotFace.setEmotion(RobotFace::IDLE);
         }
-        if (driveMode == DRIVE_SKID) applyMotors(cmdL, cmdR);
+        applyMotor(cmdThrottle);
     }
 
-    // Automatic reverse beep
-    if (cmdL < -10 && cmdR < -10 && !stealthMode) {
+    // Reverse beep
+    if (cmdThrottle < -10 && !stealthMode) {
         soundEngine.playReverseBeep();
     }
 
-    // Read motor telemetry (throttled to avoid I2C congestion)
+    // Read motor telemetry (throttled)
     static unsigned long lastTel = 0;
     if (millis() - lastTel > 200) {
         lastTel = millis();
-        if (motorLOk) {
-            telRpmL = motorL.getSpeedRPM();
-            telCurL = motorL.getCurrentMA();
-            telVoltMV = motorL.getVoltageMV();
-            telTempRaw = motorL.getTempRaw();
-        }
-        if (motorROk) {
-            telRpmR = motorR.getSpeedRPM();
-            telCurR = motorR.getCurrentMA();
+        if (motorOk) {
+            telRpm = motor.getSpeedRPM();
+            telCur = motor.getCurrentMA();
+            telVoltMV = motor.getVoltageMV();
+            telTempRaw = motor.getTempRaw();
         }
     }
 
@@ -550,14 +519,15 @@ void loop() {
     static unsigned long lastPush = 0;
     if (millis() - lastPush > 150) {
         lastPush = millis();
+        // Update face heading from IMU
+        robotFace.heading = imuFilter.heading;
         pushTelemetry();
     }
 
-    // OLED Face Update
+    // Face update
     if (!stealthMode) {
-        robotFace.update(actualOutL, actualOutR);
+        robotFace.update(actualOut, 0);
     }
-    // updateOLED();
 
     // WebSocket cleanup
     static unsigned long lastClean = 0;
@@ -566,21 +536,18 @@ void loop() {
         ws.cleanupClients();
     }
 
-    // Save Config to Flash (non-blocking in main loop)
+    // Save Config to Flash
     if (configDirty) {
         configDirty = false;
-        prefs.putInt("driveMode", driveMode);
-        prefs.putFloat("kp", balancePID.kp);
-        prefs.putFloat("ki", balancePID.ki);
-        prefs.putFloat("kd", balancePID.kd);
         prefs.putInt("maxRpm", maxRpm);
-        if (motorLOk) prefs.putBool("invL", motorL.getInverted());
-        if (motorROk) prefs.putBool("invR", motorR.getInverted());
+        if (motorOk) prefs.putBool("invM", motor.getInverted());
+        prefs.putBool("invS", servos.invertSteer);
+        prefs.putInt("servoMax", servos.maxServoSpeed);
         prefs.putBool("stealth", stealthMode);
         Serial.println("[NVS] Config saved to Flash");
     }
 
     ElegantOTA.loop();
 
-    delay(10); // Telemetry/WiFi loop can be relaxed now that balancing is in FreeRTOS
+    delay(10);
 }

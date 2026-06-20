@@ -1,6 +1,7 @@
 // ============================================================
-// ShizzBot - WebUI v2: SPY-KIDS CONTROL CENTER
-// WebSocket-driven, tabbed, mobile-first, self-balance support
+// ShizzBot Swarm - WebUI v3: SPY-KIDS SWARM COMMAND
+// Single motor + steering, arm control, robot identity,
+// gamification, heading compass. No self-balance.
 // ============================================================
 #pragma once
 
@@ -10,15 +11,15 @@ const char WEBUI_HTML[] PROGMEM = R"rawliteral(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>ShizzBot Control Center</title>
+<title>ShizzBot Swarm</title>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
 :root{
   --bg:#060b18;--panel:rgba(8,16,36,0.85);
   --cyan:#00f0ff;--magenta:#ff00aa;--lime:#00ff88;
   --orange:#ff8800;--red:#ff2244;--txt:#c8d4e0;--dim:#3a4a60;
-  --glow-cyan:0 0 8px rgba(0,240,255,.5);
-  --glow-mag:0 0 8px rgba(255,0,170,.5);
+  --accent:var(--cyan);
+  --glow-accent:0 0 8px rgba(0,240,255,.5);
 }
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--txt);
@@ -26,156 +27,123 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--txt);
   touch-action:manipulation}
 body{display:flex;flex-direction:column}
 
-/* ===== SCANLINE OVERLAY ===== */
+/* SCANLINES */
 body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;
-  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.03) 2px,rgba(0,0,0,.03) 4px);
-}
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.03) 2px,rgba(0,0,0,.03) 4px)}
 
-/* ===== HUD HEADER ===== */
+/* HUD HEADER */
 .hdr{display:flex;align-items:center;padding:6px 12px;gap:8px;
   background:linear-gradient(180deg,rgba(0,240,255,.06),transparent);
   border-bottom:1px solid rgba(0,240,255,.15)}
-.logo{font-family:'Orbitron',sans-serif;font-weight:900;font-size:18px;
-  background:linear-gradient(90deg,var(--cyan),var(--magenta));
-  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
-  animation:glitch 4s infinite;letter-spacing:2px;flex-shrink:0}
-@keyframes glitch{
-  0%,93%,95%,97%,100%{opacity:1;transform:none}
-  94%{opacity:.8;transform:translateX(-2px)}
-  96%{opacity:.9;transform:translateX(1px)}
-}
+.logo{font-family:'Orbitron',sans-serif;font-weight:900;font-size:16px;
+  color:var(--accent);letter-spacing:2px;flex-shrink:0;
+  text-shadow:0 0 8px currentColor}
 .hdr-spacer{flex:1}
 .badge{font-size:10px;padding:3px 10px;border-radius:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase}
-.badge-mode{background:rgba(0,255,136,.1);border:1px solid rgba(0,255,136,.4);color:var(--lime)}
 .badge-batt{background:rgba(255,136,0,.1);border:1px solid rgba(255,136,0,.4);color:var(--orange)}
-.badge-conn{display:flex;align-items:center;gap:4px;background:rgba(0,240,255,.08);border:1px solid rgba(0,240,255,.3);color:var(--cyan)}
+.badge-score{background:rgba(0,255,136,.1);border:1px solid rgba(0,255,136,.4);color:var(--lime)}
+.badge-conn{display:flex;align-items:center;gap:4px;background:rgba(0,240,255,.08);border:1px solid rgba(0,240,255,.3);color:var(--accent)}
 .dot{width:6px;height:6px;border-radius:50%;background:var(--lime);animation:pulse 1.5s infinite}
 .dot.off{background:var(--red);animation:none}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 .latency{font-size:10px;color:var(--dim)}
 
-/* ===== TAB BAR ===== */
+/* TABS */
 .tabs{display:flex;border-bottom:1px solid rgba(0,240,255,.1);background:var(--panel)}
-.tab{flex:1;padding:10px 0;text-align:center;font-size:12px;letter-spacing:1.5px;
+.tab{flex:1;padding:10px 0;text-align:center;font-size:11px;letter-spacing:1.5px;
   text-transform:uppercase;color:var(--dim);cursor:pointer;border:none;background:none;
   font-family:'Share Tech Mono',monospace;transition:color .2s;position:relative}
-.tab.active{color:var(--cyan)}
+.tab.active{color:var(--accent)}
 .tab.active::after{content:'';position:absolute;bottom:0;left:20%;right:20%;height:2px;
-  background:var(--cyan);box-shadow:var(--glow-cyan);border-radius:1px}
+  background:var(--accent);box-shadow:var(--glow-accent);border-radius:1px}
 .tab:active{opacity:.7}
 
-/* ===== CONTENT ===== */
+/* CONTENT */
 .content{flex:1;overflow-y:auto;overflow-x:hidden;padding:10px;display:flex;flex-direction:column;gap:10px}
 .page{display:none;flex-direction:column;gap:10px}
 .page.active{display:flex}
 
-/* ===== PANELS ===== */
+/* PANELS */
 .pnl{position:relative;background:var(--panel);border:1px solid rgba(0,240,255,.1);
   border-radius:4px;padding:12px;backdrop-filter:blur(6px)}
-.pnl::before,.pnl::after,
-.pnl .corner-bl,.pnl .corner-br{
+.pnl::before,.pnl::after,.pnl .corner-bl,.pnl .corner-br{
   content:'';position:absolute;width:14px;height:14px;pointer-events:none}
-.pnl::before{top:-1px;left:-1px;border-top:2px solid var(--cyan);border-left:2px solid var(--cyan)}
-.pnl::after{top:-1px;right:-1px;border-top:2px solid var(--cyan);border-right:2px solid var(--cyan)}
-.pnl .corner-bl{bottom:-1px;left:-1px;border-bottom:2px solid var(--cyan);border-left:2px solid var(--cyan)}
-.pnl .corner-br{bottom:-1px;right:-1px;border-bottom:2px solid var(--cyan);border-right:2px solid var(--cyan)}
-.pnl-title{font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;
-  text-transform:uppercase;color:var(--cyan);margin-bottom:10px;
-  padding-bottom:6px;border-bottom:1px solid rgba(0,240,255,.1)}
+.pnl::before{top:-1px;left:-1px;border-top:2px solid var(--accent);border-left:2px solid var(--accent)}
+.pnl::after{top:-1px;right:-1px;border-top:2px solid var(--accent);border-right:2px solid var(--accent)}
+.pnl .corner-bl{bottom:-1px;left:-1px;border-bottom:2px solid var(--accent);border-left:2px solid var(--accent)}
+.pnl .corner-br{bottom:-1px;right:-1px;border-bottom:2px solid var(--accent);border-right:2px solid var(--accent)}
+.pnl-title{font-family:'Orbitron',sans-serif;font-size:11px;color:var(--accent);
+  text-transform:uppercase;letter-spacing:2px;margin-bottom:10px;
+  text-shadow:0 0 6px currentColor}
 
-/* ===== JOYSTICK ===== */
-.joy-wrap{display:flex;flex-direction:column;align-items:center}
-.joy-outer{position:relative;width:min(240px,65vw);height:min(240px,65vw);
-  border-radius:50%;background:rgba(0,240,255,.03);
-  border:2px solid rgba(0,240,255,.12);touch-action:none;cursor:grab}
-.joy-outer::before{content:'';position:absolute;inset:25%;border-radius:50%;
-  border:1px dashed rgba(0,240,255,.08)}
-/* crosshair */
-.joy-outer::after{content:'';position:absolute;top:50%;left:10%;right:10%;height:1px;
-  background:linear-gradient(90deg,transparent,rgba(0,240,255,.1) 30%,rgba(0,240,255,.1) 70%,transparent)}
-.joy-cross-v{position:absolute;left:50%;top:10%;bottom:10%;width:1px;
-  background:linear-gradient(180deg,transparent,rgba(0,240,255,.1) 30%,rgba(0,240,255,.1) 70%,transparent);pointer-events:none}
-/* direction arrows */
-.dir-arrow{position:absolute;font-size:16px;opacity:.15;transition:opacity .15s;pointer-events:none}
-.dir-arrow.n{top:6px;left:50%;transform:translateX(-50%)}
-.dir-arrow.s{bottom:6px;left:50%;transform:translateX(-50%)}
-.dir-arrow.e{right:6px;top:50%;transform:translateY(-50%)}
-.dir-arrow.w{left:6px;top:50%;transform:translateY(-50%)}
-.dir-arrow.lit{opacity:.9;text-shadow:var(--glow-cyan)}
+/* JOYSTICK */
+.joy-wrap{display:flex;flex-direction:column;align-items:center;gap:12px}
+.joy-outer{position:relative;width:min(220px,65vw);aspect-ratio:1;border-radius:50%;
+  background:radial-gradient(circle,rgba(0,240,255,.04),rgba(0,240,255,.01));
+  border:2px solid rgba(0,240,255,.15);margin:0 auto;touch-action:none;user-select:none}
+.joy-cross-v{position:absolute;left:50%;top:8%;bottom:8%;width:1px;
+  background:linear-gradient(180deg,transparent,rgba(0,240,255,.15),transparent);transform:translateX(-50%)}
 .joy-thumb{position:absolute;width:56px;height:56px;border-radius:50%;
-  background:radial-gradient(circle at 40% 35%,rgba(0,240,255,.6),rgba(255,0,170,.5));
-  box-shadow:0 0 20px rgba(0,240,255,.35);
-  top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;
-  transition:box-shadow .15s}
-.joy-thumb.active{box-shadow:0 0 30px rgba(255,0,170,.5)}
+  background:radial-gradient(circle at 35% 35%,rgba(0,240,255,.3),rgba(0,240,255,.08));
+  border:2px solid rgba(0,240,255,.5);left:50%;top:50%;
+  transform:translate(-50%,-50%);transition:box-shadow .2s;cursor:grab}
+.joy-thumb.active{box-shadow:0 0 20px rgba(0,240,255,.6),inset 0 0 10px rgba(0,240,255,.2);cursor:grabbing}
+.dir-arrow{position:absolute;font-size:14px;color:rgba(0,240,255,.2);transition:color .15s,text-shadow .15s}
+.dir-arrow.n{top:4%;left:50%;transform:translateX(-50%)}
+.dir-arrow.s{bottom:4%;left:50%;transform:translateX(-50%)}
+.dir-arrow.e{right:4%;top:50%;transform:translateY(-50%)}
+.dir-arrow.w{left:4%;top:50%;transform:translateY(-50%)}
+.dir-arrow.lit{color:var(--accent);text-shadow:var(--glow-accent)}
 
-/* speed bars */
-.speed-row{display:flex;gap:12px;margin-top:10px;width:100%}
-.speed-box{flex:1;text-align:center;padding:8px;border-radius:4px;
-  background:rgba(0,240,255,.04);border:1px solid rgba(0,240,255,.08)}
-.speed-lbl{font-size:9px;letter-spacing:1px;color:var(--dim);text-transform:uppercase}
-.speed-num{font-family:'Orbitron',sans-serif;font-size:24px;font-weight:700;margin-top:2px}
-.speed-num.l-color{color:var(--cyan)}
-.speed-num.r-color{color:var(--magenta)}
+/* GAUGES */
+.gauge-row{display:flex;justify-content:space-around;align-items:center;padding:5px 0}
+.gauge-box{position:relative;width:80px;height:80px}
+.gauge-box svg{position:absolute;inset:0;transform:rotate(-90deg)}
+.gauge-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.gauge-val{font-family:'Orbitron',sans-serif;font-size:20px;font-weight:700;color:var(--accent)}
+.gauge-lbl{font-size:8px;color:var(--dim);text-transform:uppercase;letter-spacing:1px}
 
-/* ===== QUICK ACTIONS ===== */
-.actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
-.act{padding:14px 8px;border-radius:4px;border:1px solid;font-family:'Share Tech Mono',monospace;
-  font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;
-  cursor:pointer;transition:all .15s;background:transparent;display:flex;
-  align-items:center;justify-content:center;gap:6px}
+/* COMPASS */
+.compass-box{width:60px;height:60px;position:relative;margin:0 auto}
+.compass-box svg{width:100%;height:100%}
+
+/* ACTIONS */
+.actions{display:grid;gap:8px}
+.act{border:1px solid;border-radius:4px;padding:10px 6px;font-family:'Share Tech Mono',monospace;
+  font-size:12px;cursor:pointer;text-transform:uppercase;letter-spacing:1px;
+  background:transparent;transition:all .15s;touch-action:manipulation}
 .act:active{transform:scale(.95)}
-.act-fwd{color:var(--lime);border-color:rgba(0,255,136,.3)}
-.act-fwd:hover{background:rgba(0,255,136,.1)}
-.act-rev{color:var(--orange);border-color:rgba(255,136,0,.3)}
-.act-rev:hover{background:rgba(255,136,0,.1)}
-.act-spin{color:var(--magenta);border-color:rgba(255,0,170,.3)}
-.act-spin:hover{background:rgba(255,0,170,.1)}
-.act-horn{color:var(--cyan);border-color:rgba(0,240,255,.3)}
-.act-horn:hover{background:rgba(0,240,255,.1)}
+.act-fwd{border-color:var(--lime);color:var(--lime)}
+.act-rev{border-color:var(--red);color:var(--red)}
+.act-spin{border-color:var(--accent);color:var(--accent)}
+.act-horn{border-color:var(--orange);color:var(--orange)}
 
-/* ===== ESTOP ===== */
-.estop-bar{padding:8px 12px;display:flex;align-items:center;gap:10px;
-  border-top:1px solid rgba(255,34,68,.2);background:rgba(255,34,68,.04)}
-.estop{flex:1;padding:14px;border-radius:4px;border:2px solid var(--red);
-  background:rgba(255,34,68,.1);color:var(--red);font-family:'Orbitron',sans-serif;
-  font-size:14px;font-weight:900;letter-spacing:3px;cursor:pointer;
-  transition:all .15s;text-transform:uppercase}
-.estop:hover{background:rgba(255,34,68,.2)}
-.estop:active{transform:scale(.97);background:rgba(255,34,68,.3)}
+/* ARM SLIDERS */
+.arm-slider-group{display:flex;flex-direction:column;gap:12px}
+.arm-slider{display:flex;align-items:center;gap:10px}
+.arm-slider label{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;width:50px;text-align:right}
+.arm-slider input[type=range]{flex:1;-webkit-appearance:none;height:8px;border-radius:4px;
+  background:rgba(0,240,255,.1);outline:none}
+.arm-slider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;
+  border-radius:50%;background:var(--accent);box-shadow:var(--glow-accent);cursor:pointer}
+.arm-slider .arm-val{font-family:'Orbitron',sans-serif;font-size:14px;color:var(--accent);width:35px;text-align:center}
 
-/* ===== TELEMETRY GAUGES ===== */
-.tgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.tcard{text-align:center;padding:12px 8px;border-radius:4px;
+/* SENSOR CARDS */
+.tgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.tcard{text-align:center;padding:8px 4px;border-radius:4px;
   background:rgba(0,240,255,.03);border:1px solid rgba(0,240,255,.06)}
 .tcard-icon{font-size:20px;margin-bottom:4px}
 .tcard-lbl{font-size:9px;letter-spacing:1px;color:var(--dim);text-transform:uppercase}
-.tcard-val{font-family:'Orbitron',sans-serif;font-size:20px;font-weight:700;color:var(--cyan);margin-top:2px}
+.tcard-val{font-family:'Orbitron',sans-serif;font-size:18px;font-weight:700;color:var(--accent);margin-top:2px}
 .tcard-unit{font-size:10px;color:var(--dim)}
 .tcard.warn .tcard-val{color:var(--orange)}
 .tcard.danger .tcard-val{color:var(--red)}
 
-/* IMU horizon */
-.horizon-wrap{position:relative;width:100%;max-width:200px;margin:0 auto;aspect-ratio:1}
-.horizon-ring{width:100%;height:100%;border-radius:50%;border:2px solid rgba(0,240,255,.15);
-  position:relative;overflow:hidden;background:rgba(0,240,255,.02)}
-.horizon-sky{position:absolute;inset:0;background:linear-gradient(180deg,
-  rgba(0,100,200,.15) 0%,rgba(0,240,255,.05) 50%,rgba(100,50,0,.15) 100%);
-  transition:transform .1s}
-.horizon-line{position:absolute;left:10%;right:10%;top:50%;height:2px;
-  background:var(--cyan);box-shadow:var(--glow-cyan);transform:translateY(-50%)}
-.horizon-dot{position:absolute;width:8px;height:8px;border-radius:50%;background:var(--magenta);
-  top:50%;left:50%;transform:translate(-50%,-50%);box-shadow:var(--glow-mag);z-index:2}
-.horizon-lbl{position:absolute;bottom:6px;width:100%;text-align:center;
-  font-size:10px;color:var(--dim)}
-
-/* ===== CONFIG PAGE ===== */
-.cfg-section{margin-bottom:6px}
+/* CONFIG */
 .cfg-label{display:flex;justify-content:space-between;align-items:center;
   font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
-.cfg-val{color:var(--cyan);font-family:'Orbitron',sans-serif;font-weight:700}
+.cfg-val{color:var(--accent);font-family:'Orbitron',sans-serif;font-weight:700}
 
-/* toggle switch */
 .toggle{position:relative;width:48px;height:26px;cursor:pointer;flex-shrink:0}
 .toggle input{display:none}
 .toggle-track{position:absolute;inset:0;border-radius:13px;background:rgba(255,255,255,.08);
@@ -183,38 +151,43 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;
 .toggle input:checked+.toggle-track{background:rgba(0,240,255,.2);border-color:rgba(0,240,255,.5)}
 .toggle-thumb{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;
   background:var(--dim);transition:all .3s;box-shadow:0 0 4px rgba(0,0,0,.3)}
-.toggle input:checked~.toggle-thumb{left:25px;background:var(--cyan);box-shadow:var(--glow-cyan)}
+.toggle input:checked~.toggle-thumb{left:25px;background:var(--accent);box-shadow:var(--glow-accent)}
 
 .cfg-row{display:flex;align-items:center;justify-content:space-between;
   padding:10px 0;border-bottom:1px solid rgba(255,255,255,.04)}
 .cfg-row-label{font-size:12px;color:var(--txt)}
 
-/* slider */
 input[type=range]{-webkit-appearance:none;width:100%;height:6px;border-radius:3px;
   background:rgba(0,240,255,.1);outline:none;margin:8px 0}
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;
-  border-radius:50%;background:var(--cyan);box-shadow:var(--glow-cyan);cursor:pointer}
+  border-radius:50%;background:var(--accent);box-shadow:var(--glow-accent);cursor:pointer}
 
-/* PID group */
-.pid-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
-.pid-item{display:flex;flex-direction:column;align-items:center}
-.pid-item label{font-size:9px;color:var(--dim);letter-spacing:1px;margin-bottom:4px}
-.pid-item input[type=number]{width:70px;text-align:center;padding:6px;border-radius:4px;
-  border:1px solid rgba(0,240,255,.15);background:rgba(0,240,255,.04);color:var(--cyan);
-  font-family:'Share Tech Mono',monospace;font-size:14px}
-.pid-item input[type=number]:focus{outline:none;border-color:var(--cyan)}
+input[type=text],input[type=password],select{width:100%;box-sizing:border-box;padding:8px;
+  border:1px solid rgba(0,240,255,.15);background:rgba(0,240,255,.04);color:var(--accent);
+  font-family:'Share Tech Mono',monospace;font-size:14px;outline:none;border-radius:4px}
 
-/* WiFi info */
 .wifi-info{font-size:11px;color:var(--dim);line-height:1.8}
-.wifi-info b{color:var(--cyan)}
+.wifi-info b{color:var(--accent)}
 
-/* ===== RESPONSIVE ===== */
+/* MISSION LOG */
+.mission-log{max-height:120px;overflow-y:auto;font-size:11px;color:var(--dim);
+  line-height:1.6;padding:6px;background:rgba(0,0,0,.3);border-radius:4px}
+.mission-log .entry{border-bottom:1px solid rgba(255,255,255,.03);padding:2px 0}
+.mission-log .entry:last-child{border:none}
+
+/* ESTOP */
+.estop-bar{padding:8px 12px;background:var(--panel);border-top:1px solid rgba(255,0,0,.2)}
+.estop{width:100%;padding:14px;border:2px solid var(--red);border-radius:6px;
+  background:rgba(255,34,68,.08);color:var(--red);font-family:'Orbitron',sans-serif;
+  font-weight:700;font-size:16px;letter-spacing:3px;cursor:pointer;
+  transition:all .15s;text-transform:uppercase;touch-action:manipulation}
+.estop:active{background:rgba(255,34,68,.3);transform:scale(.97)}
+
+/* RESPONSIVE */
 @media(max-width:380px){
-  .joy-outer{width:min(200px,60vw);height:min(200px,60vw)}
-  .speed-num{font-size:20px}
+  .joy-outer{width:min(200px,60vw)}
   .tcard-val{font-size:16px}
   .actions{grid-template-columns:1fr 1fr}
-  .actions-4{grid-template-columns:1fr 1fr}
 }
 </style>
 </head>
@@ -222,19 +195,19 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;heigh
 
 <!-- HEADER -->
 <div class="hdr">
-  <div class="logo">SHIZZBOT</div>
+  <div class="logo" id="robot-logo">🤖 SHIZZBOT</div>
   <div class="hdr-spacer"></div>
   <div class="badge badge-batt" id="batt-badge">🔋 <span id="batt-txt">--%</span></div>
-  <div class="badge badge-mode" id="mode-badge">SKID STEER</div>
+  <div class="badge badge-score" id="score-badge">⭐ <span id="score-txt">0</span></div>
   <div class="badge badge-conn"><div class="dot" id="conn-dot"></div><span id="conn-txt">---</span></div>
   <div class="latency" id="latency">--ms</div>
 </div>
 
 <!-- TABS -->
 <div class="tabs">
-  <button class="tab active" data-tab="drive">🎮 DRIVE</button>
-  <button class="tab" data-tab="emotes">🎭 EMOTES</button>
-  <button class="tab" data-tab="sensors">📡 SENSORS</button>
+  <button class="tab active" data-tab="drive">🏎️ DRIVE</button>
+  <button class="tab" data-tab="arm">🦾 ARM</button>
+  <button class="tab" data-tab="emotes">🎭 FUN</button>
   <button class="tab" data-tab="config">⚙️ CONFIG</button>
 </div>
 
@@ -254,30 +227,47 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;heigh
         <div class="dir-arrow w" id="da-w">◀</div>
         <div class="joy-thumb" id="joy-thumb"></div>
       </div>
-      <div class="speed-row" style="display:flex; justify-content:space-around; align-items:center;">
-        <div class="speed-box" style="position:relative; width:80px; height:80px; padding:0;">
-          <svg width="80" height="80" viewBox="0 0 100 100" style="position:absolute; inset:0; transform:rotate(-90deg);">
+      <div class="gauge-row">
+        <!-- Throttle Gauge -->
+        <div class="gauge-box">
+          <svg width="80" height="80" viewBox="0 0 100 100">
             <circle cx="50" cy="50" r="40" fill="none" stroke="rgba(0,240,255,0.1)" stroke-width="8"></circle>
-            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--cyan)" stroke-width="8" id="svg-l" stroke-dasharray="251" stroke-dashoffset="251" stroke-linecap="round" style="transition: stroke-dashoffset 0.1s;"></circle>
+            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--accent)" stroke-width="8"
+              id="svg-throttle" stroke-dasharray="251" stroke-dashoffset="251" stroke-linecap="round"
+              style="transition:stroke-dashoffset 0.1s;"></circle>
           </svg>
-          <div style="position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-            <div class="speed-num l-color" id="sp-l" style="font-size:24px;">0</div>
+          <div class="gauge-center">
+            <div class="gauge-val" id="sp-throttle">0</div>
+            <div class="gauge-lbl">Throttle</div>
           </div>
         </div>
-        <div class="speed-box" style="position:relative; width:80px; height:80px; padding:0;">
-          <svg width="80" height="80" viewBox="0 0 100 100" style="position:absolute; inset:0; transform:rotate(-90deg);">
-            <circle cx="50" cy="50" r="40" fill="none" stroke="rgba(255,0,255,0.1)" stroke-width="8"></circle>
-            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--magenta)" stroke-width="8" id="svg-r" stroke-dasharray="251" stroke-dashoffset="251" stroke-linecap="round" style="transition: stroke-dashoffset 0.1s;"></circle>
+        <!-- Compass -->
+        <div class="compass-box">
+          <svg viewBox="0 0 100 100" id="compass-svg">
+            <circle cx="50" cy="50" r="45" fill="none" stroke="rgba(0,240,255,0.15)" stroke-width="2"/>
+            <text x="50" y="12" text-anchor="middle" fill="var(--accent)" font-size="10" font-family="Orbitron">N</text>
+            <line x1="50" y1="50" x2="50" y2="20" stroke="var(--accent)" stroke-width="2" id="compass-needle"
+              style="transform-origin:50px 50px;transition:transform .15s"/>
           </svg>
-          <div style="position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-            <div class="speed-num r-color" id="sp-r" style="font-size:24px;">0</div>
+        </div>
+        <!-- Steer Indicator -->
+        <div class="gauge-box">
+          <svg width="80" height="80" viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="40" fill="none" stroke="rgba(255,0,170,0.1)" stroke-width="8"></circle>
+            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--magenta)" stroke-width="8"
+              id="svg-steer" stroke-dasharray="251" stroke-dashoffset="251" stroke-linecap="round"
+              style="transition:stroke-dashoffset 0.1s;"></circle>
+          </svg>
+          <div class="gauge-center">
+            <div class="gauge-val" id="sp-steer" style="color:var(--magenta)">0</div>
+            <div class="gauge-lbl">Steer</div>
           </div>
         </div>
       </div>
     </div>
   </div>
 
-  <div class="actions actions-4" style="grid-template-columns:1fr 1fr 1fr 1fr">
+  <div class="actions" style="grid-template-columns:1fr 1fr 1fr 1fr">
     <button class="act act-fwd" onclick="qAct('fwd')">▲ FWD</button>
     <button class="act act-spin" onclick="qAct('spin')">↻ SPIN</button>
     <button class="act act-horn" onclick="qAct('horn')">🔊 HORN</button>
@@ -292,12 +282,58 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;heigh
 
 </div>
 
-<!-- ============ EMOTES & SOUNDS TAB ============ -->
+<!-- ============ ARM TAB ============ -->
+<div class="page" id="pg-arm">
+
+  <div class="pnl">
+    <div class="corner-bl"></div><div class="corner-br"></div>
+    <div class="pnl-title">Manipulator Arm</div>
+    <div class="arm-slider-group">
+      <div class="arm-slider">
+        <label>Base</label>
+        <input type="range" id="arm-base" min="-100" max="100" value="0">
+        <div class="arm-val" id="arm-base-v">0</div>
+      </div>
+      <div class="arm-slider">
+        <label>Lift</label>
+        <input type="range" id="arm-lift" min="-100" max="100" value="0">
+        <div class="arm-val" id="arm-lift-v">0</div>
+      </div>
+      <div class="arm-slider">
+        <label>Grip</label>
+        <input type="range" id="arm-grip" min="-100" max="100" value="0">
+        <div class="arm-val" id="arm-grip-v">0</div>
+      </div>
+    </div>
+    <p style="font-size:10px;color:var(--dim);margin-top:8px;text-align:center">
+      ⚡ Continuous rotation: 0 = STOP, ±100 = full speed
+    </p>
+  </div>
+
+  <div class="pnl">
+    <div class="corner-bl"></div><div class="corner-br"></div>
+    <div class="pnl-title">Presets</div>
+    <div class="actions" style="grid-template-columns:1fr 1fr">
+      <button class="act act-fwd" onclick="armPreset('park')">🅿️ PARK</button>
+      <button class="act act-horn" onclick="armPreset('grab')">🤏 GRAB</button>
+      <button class="act act-spin" onclick="armPreset('wave')">👋 WAVE</button>
+      <button class="act act-rev" onclick="armPreset('release')">✋ RELEASE</button>
+    </div>
+  </div>
+
+  <div class="pnl" style="padding:6px 12px">
+    <div class="corner-bl"></div><div class="corner-br"></div>
+    <div class="cfg-label"><span>Servo Max Speed</span><span class="cfg-val" id="servomax-v">70%</span></div>
+    <input type="range" id="servomax" min="10" max="100" value="70">
+  </div>
+</div>
+
+<!-- ============ FUN TAB ============ -->
 <div class="page" id="pg-emotes">
   <div class="pnl">
     <div class="corner-bl"></div><div class="corner-br"></div>
     <div class="pnl-title">Soundboard</div>
-    <div class="actions actions-4" style="grid-template-columns:1fr 1fr; gap:10px; margin-bottom:15px">
+    <div class="actions" style="grid-template-columns:1fr 1fr; gap:10px; margin-bottom:15px">
       <button class="act act-horn" onclick="sendSnd('horn')">🔊 HORN</button>
       <button class="act act-horn" onclick="sendSnd('chirp')">🤖 CHIRP</button>
       <button class="act act-spin" onclick="sendSnd('scan')">📡 SCAN</button>
@@ -308,11 +344,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;heigh
   <div class="pnl">
     <div class="corner-bl"></div><div class="corner-br"></div>
     <div class="pnl-title">Face Override</div>
-    <div class="actions actions-4" style="grid-template-columns:1fr 1fr; gap:10px">
+    <div class="actions" style="grid-template-columns:1fr 1fr; gap:10px">
       <button class="act act-fwd" onclick="sendEmo('happy')">😄 HAPPY</button>
       <button class="act act-rev" onclick="sendEmo('angry')">😠 ANGRY</button>
       <button class="act act-spin" onclick="sendEmo('surprised')">😲 SURPRISE</button>
-      <button class="act act-horn" onclick="sendEmo('dizzy')">😵‍💫 DIZZY</button>
+      <button class="act act-horn" onclick="sendEmo('dizzy')">😵 DIZZY</button>
       <button class="act" style="grid-column: span 2; border-color:var(--dim); color:var(--txt)" onclick="sendEmo('idle')">😐 NORMAL</button>
     </div>
   </div>
@@ -324,90 +360,74 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;heigh
       <button class="act act-horn" onclick="wsSend({c:'dance'})" style="padding:15px; font-size:16px;">🕺 DANCE SEQUENCE</button>
     </div>
   </div>
-</div>
-
-<!-- ============ SENSORS TAB ============ -->
-<div class="page" id="pg-sensors">
 
   <div class="pnl">
     <div class="corner-bl"></div><div class="corner-br"></div>
-    <div class="pnl-title">Motor Telemetry</div>
-    <div class="tgrid">
-      <div class="tcard" id="tc-volt"><div class="tcard-icon">⚡</div>
-        <div class="tcard-lbl">Voltage</div>
-        <div class="tcard-val" id="tv-v">--</div><div class="tcard-unit">V</div></div>
-      <div class="tcard" id="tc-temp"><div class="tcard-icon">🌡️</div>
-        <div class="tcard-lbl">Motor Temp</div>
-        <div class="tcard-val" id="tv-t">--</div><div class="tcard-unit">°C</div></div>
-      <div class="tcard"><div class="tcard-icon">🔄</div>
-        <div class="tcard-lbl">RPM Left</div>
-        <div class="tcard-val" id="tv-sl">0</div><div class="tcard-unit">RPM</div></div>
-      <div class="tcard"><div class="tcard-icon">🔄</div>
-        <div class="tcard-lbl">RPM Right</div>
-        <div class="tcard-val" id="tv-sr">0</div><div class="tcard-unit">RPM</div></div>
-      <div class="tcard"><div class="tcard-icon">🔌</div>
-        <div class="tcard-lbl">Current L</div>
-        <div class="tcard-val" id="tv-cl">--</div><div class="tcard-unit">mA</div></div>
-      <div class="tcard"><div class="tcard-icon">🔌</div>
-        <div class="tcard-lbl">Current R</div>
-        <div class="tcard-val" id="tv-cr">--</div><div class="tcard-unit">mA</div></div>
+    <div class="pnl-title">Mission Log</div>
+    <div class="mission-log" id="mission-log">
+      <div class="entry">🚀 System online!</div>
     </div>
   </div>
-
-  <div class="pnl">
-    <div class="corner-bl"></div><div class="corner-br"></div>
-    <div class="pnl-title">IMU — Attitude</div>
-    <div class="horizon-wrap">
-      <div class="horizon-ring">
-        <div class="horizon-sky" id="hz-sky"></div>
-        <div class="horizon-line"></div>
-        <div class="horizon-dot" id="hz-dot"></div>
-      </div>
-      <div class="horizon-lbl" id="hz-lbl">P: 0.0°  R: 0.0°</div>
-    </div>
-  </div>
-
 </div>
+
+<!-- ============ SENSORS (inside drive for now) ============ -->
 
 <!-- ============ CONFIG TAB ============ -->
 <div class="page" id="pg-config">
 
   <div class="pnl">
     <div class="corner-bl"></div><div class="corner-br"></div>
-    <div class="pnl-title">Drive Mode</div>
+    <div class="pnl-title">🤖 Robot Identity</div>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <input type="text" id="cfg-name" placeholder="Robot Name" maxlength="16">
+      <select id="cfg-color">
+        <option value="0">🔵 Cyber Blue (Boy)</option>
+        <option value="1">🩷 Neon Pink (Girl)</option>
+        <option value="2">💚 Hacker Green</option>
+        <option value="3">🧡 Blaze Orange</option>
+      </select>
+      <button class="act act-spin" onclick="saveName()" style="width:100%;padding:10px;">💾 SAVE IDENTITY</button>
+    </div>
+  </div>
+
+  <div class="pnl">
+    <div class="corner-bl"></div><div class="corner-br"></div>
+    <div class="pnl-title">Drive Config</div>
     <div class="cfg-row">
-      <span class="cfg-row-label">Self-Balancing Mode</span>
-      <label class="toggle"><input type="checkbox" id="cfg-balance" onchange="sendCfg()">
+      <span class="cfg-row-label">Invert Motor</span>
+      <label class="toggle"><input type="checkbox" id="cfg-invM" onchange="sendCfg()">
         <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
     </div>
     <div class="cfg-row">
-      <span class="cfg-row-label" style="color:var(--magenta)">Stealth Mode (No LCD/LED/Sound)</span>
+      <span class="cfg-row-label">Invert Steering</span>
+      <label class="toggle"><input type="checkbox" id="cfg-invS" onchange="sendCfg()">
+        <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+    </div>
+    <div class="cfg-row">
+      <span class="cfg-row-label" style="color:var(--magenta)">Stealth Mode</span>
       <label class="toggle"><input type="checkbox" id="cfg-stealth" onchange="sendCfg()">
-        <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
-    </div>
-    <div class="cfg-row">
-      <span class="cfg-row-label">Invert Left Motor</span>
-      <label class="toggle"><input type="checkbox" id="cfg-invL" onchange="sendCfg()">
-        <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
-    </div>
-    <div class="cfg-row">
-      <span class="cfg-row-label">Invert Right Motor</span>
-      <label class="toggle"><input type="checkbox" id="cfg-invR" onchange="sendCfg()">
         <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
     </div>
   </div>
 
-  <div class="pnl" id="pid-panel">
+  <div class="pnl">
     <div class="corner-bl"></div><div class="corner-br"></div>
-    <div class="pnl-title">Balance PID Tuning</div>
-    <div class="pid-grid">
-      <div class="pid-item"><label>KP</label>
-        <input type="number" id="pid-kp" value="12" step="0.5" onchange="sendPid()"></div>
-      <div class="pid-item"><label>KI</label>
-        <input type="number" id="pid-ki" value="0.4" step="0.1" onchange="sendPid()"></div>
-      <div class="pid-item"><label>KD</label>
-        <input type="number" id="pid-kd" value="0.6" step="0.1" onchange="sendPid()"></div>
+    <div class="pnl-title">Sensors</div>
+    <div class="tgrid">
+      <div class="tcard" id="tc-volt"><div class="tcard-icon">⚡</div>
+        <div class="tcard-lbl">Volts</div><div class="tcard-val"><span id="tv-v">--</span><span class="tcard-unit">V</span></div></div>
+      <div class="tcard" id="tc-temp"><div class="tcard-icon">🌡️</div>
+        <div class="tcard-lbl">Temp</div><div class="tcard-val"><span id="tv-t">--</span><span class="tcard-unit">°C</span></div></div>
+      <div class="tcard" id="tc-rpm"><div class="tcard-icon">⚙️</div>
+        <div class="tcard-lbl">RPM</div><div class="tcard-val" id="tv-rpm">--</div></div>
+      <div class="tcard"><div class="tcard-icon">🧭</div>
+        <div class="tcard-lbl">Heading</div><div class="tcard-val" id="tv-hdg">--<span class="tcard-unit">°</span></div></div>
+      <div class="tcard"><div class="tcard-icon">📐</div>
+        <div class="tcard-lbl">Pitch</div><div class="tcard-val" id="tv-pitch">--<span class="tcard-unit">°</span></div></div>
+      <div class="tcard"><div class="tcard-icon">🔋</div>
+        <div class="tcard-lbl">Current</div><div class="tcard-val" id="tv-cur">--<span class="tcard-unit">mA</span></div></div>
     </div>
+    <button class="act act-spin" onclick="wsSend({c:'zero'})" style="width:100%;margin-top:8px">🧭 ZERO HEADING</button>
   </div>
 
   <div class="pnl">
@@ -420,9 +440,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;heigh
     <div class="corner-bl"></div><div class="corner-br"></div>
     <div class="pnl-title">WiFi Setup</div>
     <div style="display:flex; flex-direction:column; gap:8px;">
-      <input type="text" id="wifi-ssid" placeholder="Home WiFi SSID" style="width:100%; box-sizing:border-box; padding:8px; border:1px solid rgba(0,240,255,.15); background:rgba(0,240,255,.04); color:var(--cyan); font-family:'Share Tech Mono',monospace; font-size:14px; outline:none; border-radius:4px;">
-      <input type="password" id="wifi-pass" placeholder="Password" style="width:100%; box-sizing:border-box; padding:8px; border:1px solid rgba(0,240,255,.15); background:rgba(0,240,255,.04); color:var(--cyan); font-family:'Share Tech Mono',monospace; font-size:14px; outline:none; border-radius:4px;">
-      <button class="act act-spin" onclick="saveWiFi()" style="width:100%; padding:10px; margin-top:5px;">💾 SAVE & REBOOT</button>
+      <input type="text" id="wifi-ssid" placeholder="Home WiFi SSID">
+      <input type="password" id="wifi-pass" placeholder="Password">
+      <button class="act act-spin" onclick="saveWiFi()" style="width:100%; padding:10px;">💾 SAVE & REBOOT</button>
     </div>
   </div>
 
@@ -443,7 +463,38 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;heigh
 <script>
 // ===== STATE =====
 let ws=null,wsOk=false,maxPct=50,joyActive=false;
-let sL=0,sR=0,lastPing=0,lat=0;
+let sThrottle=0,sSteer=0,lastPing=0,lat=0;
+
+// ===== COLOR THEMES =====
+const THEMES = {
+  0: {accent:'#00f0ff', glow:'0 0 8px rgba(0,240,255,.5)'},   // Cyber Blue
+  1: {accent:'#ff00aa', glow:'0 0 8px rgba(255,0,170,.5)'},    // Neon Pink
+  2: {accent:'#00ff88', glow:'0 0 8px rgba(0,255,136,.5)'},     // Hacker Green
+  3: {accent:'#ff8800', glow:'0 0 8px rgba(255,136,0,.5)'}      // Blaze Orange
+};
+
+function applyTheme(colorId) {
+  const t = THEMES[colorId] || THEMES[0];
+  document.documentElement.style.setProperty('--accent', t.accent);
+  document.documentElement.style.setProperty('--glow-accent', t.glow);
+}
+
+// ===== GAUGE HELPER =====
+function updateGauge(id, val) {
+  const c = document.getElementById(id);
+  if(!c) return;
+  c.style.strokeDashoffset = 251 - (251 * Math.abs(val) / 100);
+}
+
+// ===== MISSION LOG =====
+function logMission(msg) {
+  const log = document.getElementById('mission-log');
+  const entry = document.createElement('div');
+  entry.className = 'entry';
+  entry.textContent = msg;
+  log.insertBefore(entry, log.firstChild);
+  if(log.children.length > 30) log.removeChild(log.lastChild);
+}
 
 // ===== TABS =====
 document.querySelectorAll('.tab').forEach(t=>{
@@ -455,13 +506,6 @@ document.querySelectorAll('.tab').forEach(t=>{
   });
 });
 
-function updateGauge(id, val) {
-  const circle = document.getElementById(id);
-  if(!circle) return;
-  const pct = Math.abs(val) / 100;
-  circle.style.strokeDashoffset = 251 - (251 * pct);
-}
-
 // ===== WEBSOCKET =====
 function wsConnect(){
   const h=location.host||'192.168.4.1';
@@ -470,6 +514,7 @@ function wsConnect(){
     wsOk=true;
     document.getElementById('conn-dot').classList.remove('off');
     document.getElementById('conn-txt').textContent='ONLINE';
+    logMission('🟢 Connected to robot!');
   };
   ws.onclose=()=>{wsOk=false;
     document.getElementById('conn-dot').classList.add('off');
@@ -482,48 +527,43 @@ function wsConnect(){
     document.getElementById('latency').textContent=lat+'ms';
     try{
       const d=JSON.parse(e.data);
-      // Voltage: comes as mV int → display as V with 1 decimal
+      // Voltage
       const volts=(d.v/1000).toFixed(1);
       document.getElementById('tv-v').textContent=volts;
       const vc=document.getElementById('tc-volt');
       vc.classList.toggle('warn',d.v<11000&&d.v>0);
       vc.classList.toggle('danger',d.v<10000&&d.v>0);
 
-      // Temp: comes as °C*10 int → display as °C with 1 decimal
+      // Temp
       const temp=(d.t/10).toFixed(1);
       document.getElementById('tv-t').textContent=temp;
-      const tc=document.getElementById('tc-temp');
-      tc.classList.toggle('warn',d.t>500);
-      tc.classList.toggle('danger',d.t>700);
 
-      // Speed: already in RPM
-      document.getElementById('tv-sl').textContent=d.sl;
-      document.getElementById('tv-sr').textContent=d.sr;
+      // RPM
+      document.getElementById('tv-rpm').textContent=d.rpm;
 
-      // Current: already in mA
-      document.getElementById('tv-cl').textContent=d.cl;
-      document.getElementById('tv-cr').textContent=d.cr;
+      // Current
+      document.getElementById('tv-cur').textContent=d.cur;
 
-      // IMU
-      updateHorizon(d.p||0,d.r||0);
+      // Heading
+      const hdg = (d.hdg/10).toFixed(0);
+      document.getElementById('tv-hdg').textContent=hdg+'°';
+      const needle = document.getElementById('compass-needle');
+      if(needle) needle.style.transform = 'rotate('+hdg+'deg)';
 
-      // Mode
-      const isBal=d.m==='balance';
-      document.getElementById('mode-badge').textContent=isBal?'SELF-BALANCE':'SKID STEER';
-      document.getElementById('mode-badge').style.borderColor=isBal?'rgba(255,0,170,.5)':'rgba(0,255,136,.4)';
-      document.getElementById('mode-badge').style.color=isBal?'var(--magenta)':'var(--lime)';
+      // Pitch
+      document.getElementById('tv-pitch').textContent=(d.p/10).toFixed(1);
 
       // Battery
       if (d.batt !== undefined) {
         document.getElementById('batt-txt').textContent = d.batt + '%';
         const bb = document.getElementById('batt-badge');
-        if (d.batt < 20) {
-          bb.style.borderColor = 'rgba(255,34,68,.8)';
-          bb.style.color = 'var(--red)';
-        } else {
-          bb.style.borderColor = 'rgba(255,136,0,.4)';
-          bb.style.color = 'var(--orange)';
-        }
+        bb.style.borderColor = d.batt < 20 ? 'rgba(255,34,68,.8)' : 'rgba(255,136,0,.4)';
+        bb.style.color = d.batt < 20 ? 'var(--red)' : 'var(--orange)';
+      }
+
+      // Score
+      if (d.score !== undefined) {
+        document.getElementById('score-txt').textContent = d.score;
       }
 
       // WiFi info
@@ -531,18 +571,21 @@ function wsConnect(){
         'SSID: <b>'+d.ssid+'</b><br>IP: <b>'+d.ip+'</b><br>RSSI: <b>'+d.rssi+' dBm</b><br>Clients: <b>'+d.wc+'</b>';
 
       // One-time config sync on connection
-      if(d.kp !== undefined && !window.cfgSynced) {
+      if(d.name !== undefined && !window.cfgSynced) {
         window.cfgSynced = true;
-        document.getElementById('cfg-balance').checked = (d.m === 'balance');
-        document.getElementById('cfg-invL').checked = (d.invL === 1);
-        document.getElementById('cfg-invR').checked = (d.invR === 1);
-        document.getElementById('pid-kp').value = d.kp;
-        document.getElementById('pid-ki').value = d.ki;
-        document.getElementById('pid-kd').value = d.kd;
+        document.getElementById('cfg-name').value = d.name;
+        document.getElementById('cfg-color').value = d.color;
+        document.getElementById('cfg-invM').checked = (d.invM === 1);
+        document.getElementById('cfg-invS').checked = (d.invS === 1);
+        document.getElementById('cfg-stealth').checked = (d.stealth === 1);
         document.getElementById('maxsp').value = d.maxSp;
         document.getElementById('maxsp-v').textContent = d.maxSp + '%';
-        if (d.stealth !== undefined) document.getElementById('cfg-stealth').checked = (d.stealth === 1);
+        document.getElementById('servomax').value = d.servoMax;
+        document.getElementById('servomax-v').textContent = d.servoMax + '%';
         maxPct = d.maxSp;
+        // Apply identity
+        document.getElementById('robot-logo').textContent = '🤖 ' + d.name.toUpperCase();
+        applyTheme(d.color);
       }
     }catch(ex){}
   };
@@ -573,19 +616,16 @@ function joyMove(cx,cy){
   thumb.style.left=`calc(50% + ${dx}px)`;
   thumb.style.top=`calc(50% + ${dy}px)`;
 
-  const nx=dx/maxR,ny=-dy/maxR; // normalized -1..1, Y inverted
-  
-  // True proportional tank mix
-  // Preserves curves and avoids clipping in diagonal directions
-  let v = (1 - Math.abs(nx)) * ny + ny;
-  let w = (1 - Math.abs(ny)) * nx + nx;
-  sL = Math.round(((v + w) / 2) * maxPct);
-  sR = Math.round(((v - w) / 2) * maxPct);
+  const nx=dx/maxR,ny=-dy/maxR; // normalized -1..1
 
-  document.getElementById('sp-l').textContent=sL;
-  document.getElementById('sp-r').textContent=sR;
-  updateGauge('svg-l', sL);
-  updateGauge('svg-r', sR);
+  // Ackermann: Y = throttle, X = steering
+  sThrottle = Math.round(ny * maxPct);
+  sSteer = Math.round(nx * 100);
+
+  document.getElementById('sp-throttle').textContent=sThrottle;
+  document.getElementById('sp-steer').textContent=sSteer;
+  updateGauge('svg-throttle', sThrottle);
+  updateGauge('svg-steer', sSteer);
 
   // Direction arrows
   arrows.n.classList.toggle('lit',ny>0.25);
@@ -597,13 +637,13 @@ function joyMove(cx,cy){
 function joyReset(){
   thumb.style.left='50%';thumb.style.top='50%';
   thumb.classList.remove('active');
-  sL=0;sR=0;
-  document.getElementById('sp-l').textContent='0';
-  document.getElementById('sp-r').textContent='0';
-  updateGauge('svg-l', 0);
-  updateGauge('svg-r', 0);
+  sThrottle=0;sSteer=0;
+  document.getElementById('sp-throttle').textContent='0';
+  document.getElementById('sp-steer').textContent='0';
+  updateGauge('svg-throttle', 0);
+  updateGauge('svg-steer', 0);
   Object.values(arrows).forEach(a=>a.classList.remove('lit'));
-  wsSend({c:'m',l:0,r:0});
+  wsSend({c:'m',t:0,s:0});
 }
 
 joy.addEventListener('pointerdown',e=>{joyActive=true;thumb.classList.add('active');joy.setPointerCapture(e.pointerId);joyMove(e.clientX,e.clientY);});
@@ -611,82 +651,108 @@ joy.addEventListener('pointermove',e=>{if(joyActive)joyMove(e.clientX,e.clientY)
 joy.addEventListener('pointerup',()=>{joyActive=false;joyReset();});
 joy.addEventListener('pointercancel',()=>{joyActive=false;joyReset();});
 
-// Send motor commands at max 20Hz, only when changed, plus a heartbeat
-let lastSentL = null, lastSentR = null;
+// Send motor+steer at max 20Hz
+let lastSentT = null, lastSentS = null;
 setInterval(()=>{
-  if(joyActive){
-    if(sL !== lastSentL || sR !== lastSentR) {
-      wsSend({c:'m',l:sL,r:sR});
-      lastSentL = sL; lastSentR = sR;
-    }
-  } else {
-    if(Date.now() - lastPing > 500) {
-      wsSend({c:'m',l:0,r:0}); // Heartbeat
-    }
+  if(joyActive && (sThrottle!==lastSentT || sSteer!==lastSentS)){
+    wsSend({c:'m', t:sThrottle, s:sSteer});
+    lastSentT=sThrottle; lastSentS=sSteer;
   }
-}, 50);
+},50);
 
-// ===== MAX SPEED =====
-const slider=document.getElementById('maxsp');
-slider.addEventListener('change',()=>{
-  maxPct=parseInt(slider.value);
+// Max speed slider
+document.getElementById('maxsp').addEventListener('input',(e)=>{
+  maxPct=parseInt(e.target.value);
   document.getElementById('maxsp-v').textContent=maxPct+'%';
-  sendCfg(); // Send config when slider is released
+  sendCfg();
 });
-slider.addEventListener('input',()=>{
-  document.getElementById('maxsp-v').textContent=slider.value+'%';
+
+// Servo max speed slider
+document.getElementById('servomax').addEventListener('input',(e)=>{
+  const v=parseInt(e.target.value);
+  document.getElementById('servomax-v').textContent=v+'%';
+  sendCfg();
 });
+
+// ===== ARM SLIDERS =====
+['arm-base','arm-lift','arm-grip'].forEach(id=>{
+  const el = document.getElementById(id);
+  const valEl = document.getElementById(id+'-v');
+
+  // Touch: send while dragging
+  el.addEventListener('input', ()=>{
+    valEl.textContent = el.value;
+    sendArm();
+  });
+
+  // Release: snap back to zero (continuous rotation — stop on release)
+  el.addEventListener('change', ()=>{
+    el.value = 0;
+    valEl.textContent = '0';
+    sendArm();
+  });
+});
+
+function sendArm(){
+  wsSend({c:'arm',
+    b:parseInt(document.getElementById('arm-base').value),
+    l:parseInt(document.getElementById('arm-lift').value),
+    g:parseInt(document.getElementById('arm-grip').value)
+  });
+}
+
+function armPreset(p){
+  wsSend({c:'armPreset', p:p});
+  logMission('🦾 Arm: ' + p.toUpperCase());
+}
 
 // ===== QUICK ACTIONS =====
 function qAct(a){
-  if(a==='fwd'){sL=maxPct;sR=maxPct;}
-  else if(a==='rev'){sL=-maxPct;sR=-maxPct;}
-  else if(a==='spin'){sL=maxPct;sR=-maxPct;}
-  else if(a==='horn'){sendSnd('horn'); return;}
-  
-  document.getElementById('sp-l').textContent=sL;
-  document.getElementById('sp-r').textContent=sR;
-  updateGauge('svg-l', sL);
-  updateGauge('svg-r', sR);
-  wsSend({c:'m',l:sL,r:sR});
-  setTimeout(()=>{sL=0;sR=0;
-    document.getElementById('sp-l').textContent='0';
-    document.getElementById('sp-r').textContent='0';
-    updateGauge('svg-l', 0);
-    updateGauge('svg-r', 0);
-    wsSend({c:'m',l:0,r:0});
+  if(a==='fwd'){sThrottle=maxPct;sSteer=0;}
+  else if(a==='rev'){sThrottle=-maxPct;sSteer=0;}
+  else if(a==='spin'){sThrottle=30;sSteer=100;}
+  else if(a==='horn'){wsSend({c:'snd',s:'horn'});logMission('📢 HONK!');return;}
+
+  document.getElementById('sp-throttle').textContent=sThrottle;
+  document.getElementById('sp-steer').textContent=sSteer;
+  updateGauge('svg-throttle', sThrottle);
+  updateGauge('svg-steer', sSteer);
+  wsSend({c:'m',t:sThrottle,s:sSteer});
+  setTimeout(()=>{sThrottle=0;sSteer=0;
+    document.getElementById('sp-throttle').textContent='0';
+    document.getElementById('sp-steer').textContent='0';
+    updateGauge('svg-throttle', 0);
+    updateGauge('svg-steer', 0);
+    wsSend({c:'m',t:0,s:0});
   },1200);
 }
 
-// ===== EMOTES & SOUNDS =====
-function sendSnd(snd) {
-  wsSend({c:'snd', s:snd});
-}
-
-function sendEmo(emo) {
-  wsSend({c:'emo', e:emo});
-}
-
-// ===== ESTOP =====
-document.getElementById('btn-estop').addEventListener('click',()=>{
-  wsSend({c:'stop'});
-  sL=0;sR=0;
-  document.getElementById('sp-l').textContent='0';
-  document.getElementById('sp-r').textContent='0';
-  updateGauge('svg-l', 0);
-  updateGauge('svg-r', 0);
-  if(navigator.vibrate)navigator.vibrate(200);
-});
+// ===== SOUNDS & EMOTES =====
+function sendSnd(s){wsSend({c:'snd',s:s});logMission('🔊 Sound: '+s);}
+function sendEmo(e){wsSend({c:'emo',e:e});logMission('🎭 Face: '+e);}
 
 // ===== CONFIG =====
 function sendCfg(){
   wsSend({c:'cfg',
-    bal:document.getElementById('cfg-balance').checked?1:0,
-    invL:document.getElementById('cfg-invL').checked?1:0,
-    invR:document.getElementById('cfg-invR').checked?1:0,
-    maxSp:maxPct,
+    invM:document.getElementById('cfg-invM').checked?1:0,
+    invS:document.getElementById('cfg-invS').checked?1:0,
+    maxSp:parseInt(document.getElementById('maxsp').value),
+    servoMax:parseInt(document.getElementById('servomax').value),
     stealth:document.getElementById('cfg-stealth').checked?1:0
   });
+}
+
+// ===== IDENTITY =====
+function saveName(){
+  const n = document.getElementById('cfg-name').value.trim();
+  const c = parseInt(document.getElementById('cfg-color').value);
+  if(n){
+    wsSend({c:'name', n:n});
+    wsSend({c:'color', v:c});
+    document.getElementById('robot-logo').textContent = '🤖 ' + n.toUpperCase();
+    applyTheme(c);
+    logMission('🏷️ Renamed to: ' + n);
+  }
 }
 
 // ===== WIFI =====
@@ -695,37 +761,29 @@ function saveWiFi(){
   const p = document.getElementById('wifi-pass').value;
   if(s){
     wsSend({c:'wifi', s:s, p:p});
-    alert('Credentials saved! ShizzBot is rebooting to connect...');
+    alert('Credentials saved! Rebooting...');
   } else {
     alert('Please enter an SSID.');
   }
 }
 
-function sendPid(){
-  wsSend({c:'pid',
-    kp:parseFloat(document.getElementById('pid-kp').value),
-    ki:parseFloat(document.getElementById('pid-ki').value),
-    kd:parseFloat(document.getElementById('pid-kd').value)
+// ===== ESTOP =====
+document.getElementById('btn-estop').addEventListener('click',()=>{
+  wsSend({c:'stop'});
+  sThrottle=0;sSteer=0;
+  document.getElementById('sp-throttle').textContent='0';
+  document.getElementById('sp-steer').textContent='0';
+  updateGauge('svg-throttle', 0);
+  updateGauge('svg-steer', 0);
+  // Reset arm sliders
+  ['arm-base','arm-lift','arm-grip'].forEach(id=>{
+    document.getElementById(id).value=0;
+    document.getElementById(id+'-v').textContent='0';
   });
-}
+  if(navigator.vibrate)navigator.vibrate(200);
+  logMission('🛑 EMERGENCY STOP!');
+});
 
-// ===== IMU HORIZON =====
-function updateHorizon(pitch,roll){
-  const sky=document.getElementById('hz-sky');
-  const dot=document.getElementById('hz-dot');
-  const lbl=document.getElementById('hz-lbl');
-  // Shift sky based on pitch (clamped to ±45°)
-  const pClamped=clamp(pitch,-45,45);
-  const rClamped=clamp(roll,-45,45);
-  sky.style.transform=`translateY(${pClamped*1.5}%) rotate(${rClamped}deg)`;
-  // Dot shows roll+pitch offset
-  const dotX=clamp(rClamped/45*40,-40,40);
-  const dotY=clamp(pClamped/45*40,-40,40);
-  dot.style.transform=`translate(calc(-50% + ${dotX}px),calc(-50% + ${dotY}px))`;
-  lbl.textContent=`P: ${(pitch/10).toFixed(1)}°  R: ${(roll/10).toFixed(1)}°`;
-}
-
-function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
 </script>
 </body>
 </html>

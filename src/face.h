@@ -1,7 +1,8 @@
 // ============================================================
-// ShizzBot - Robot Face Engine v2
+// ShizzBot - Robot Face Engine v3 (Swarm)
 // Animated face for the M5StickS3 LCD using M5Canvas (Sprite)
-// Features bouncy movement, mouths, and expanded emotions.
+// Features bouncy movement, mouths, expanded emotions,
+// robot identity (name + color tinting), and heading indicator.
 // ============================================================
 #pragma once
 #include <M5Unified.h>
@@ -10,6 +11,21 @@
 class RobotFace {
 public:
     enum Emotion { IDLE, MOVING, ERROR, SLEEPY, HAPPY, ANGRY, DIZZY, SURPRISED };
+
+    // Robot identity
+    // 0=cyan, 1=magenta, 2=lime, 3=orange
+    int robotColor = 0;
+    String robotName = "ShizzBot";
+    float heading = 0; // 0-360 from IMU, displayed as mini compass
+
+    uint32_t getAccentColor() {
+        switch(robotColor) {
+            case 1: return M5.Display.color565(255, 0, 170);  // magenta
+            case 2: return M5.Display.color565(0, 255, 100);  // lime
+            case 3: return M5.Display.color565(255, 170, 0);  // orange
+            default: return TFT_CYAN;
+        }
+    }
 
     void init() {
         _canvas.createSprite(M5.Display.width(), M5.Display.height());
@@ -128,7 +144,8 @@ private:
             _isBlinking = false;
         }
 
-        uint32_t eyeColor = TFT_CYAN;
+        uint32_t accent = getAccentColor();
+        uint32_t eyeColor = accent;
         int xo = constrain(_xOffset, -25, 25);
         int yo = constrain(_yOffset + _bounceY, -25, 25);
 
@@ -199,15 +216,13 @@ private:
         // Draw Mouth
         int mouthY = cy + 40;
         if (_currentEmotion == IDLE) {
-            _canvas.drawLine(cx - 10, mouthY, cx + 10, mouthY, TFT_CYAN); // straight line
+            _canvas.drawLine(cx - 10, mouthY, cx + 10, mouthY, accent);
         }
         else if (_currentEmotion == HAPPY || _currentEmotion == MOVING) {
-            // Smile arc (cutout method)
-            _canvas.fillCircle(cx + xo/2, mouthY + yo/2, 12, TFT_CYAN);
+            _canvas.fillCircle(cx + xo/2, mouthY + yo/2, 12, accent);
             _canvas.fillCircle(cx + xo/2, mouthY + yo/2 - 4, 14, TFT_BLACK);
         }
         else if (_currentEmotion == ANGRY) {
-            // Frown
             _canvas.fillCircle(cx, mouthY + 10, 12, TFT_RED);
             _canvas.fillCircle(cx, mouthY + 14, 14, TFT_BLACK);
         }
@@ -215,7 +230,6 @@ private:
             _canvas.drawCircle(cx, mouthY + 5, 8, TFT_YELLOW);
         }
         else if (_currentEmotion == DIZZY) {
-            // Squiggly line
             _canvas.drawLine(cx - 15, mouthY, cx - 5, mouthY + 5, TFT_ORANGE);
             _canvas.drawLine(cx - 5, mouthY + 5, cx + 5, mouthY - 5, TFT_ORANGE);
             _canvas.drawLine(cx + 5, mouthY - 5, cx + 15, mouthY, TFT_ORANGE);
@@ -223,6 +237,22 @@ private:
         else if (_currentEmotion == ERROR) {
             _canvas.drawLine(cx - 10, mouthY, cx + 10, mouthY, TFT_RED);
         }
+
+        // Draw robot name at bottom
+        _canvas.setTextSize(1);
+        _canvas.setTextColor(accent);
+        int nameW = robotName.length() * 6; // approx 6px per char at size 1
+        _canvas.setCursor((w - nameW) / 2, h - 12);
+        _canvas.print(robotName);
+
+        // Mini heading indicator (top-right corner)
+        int compassX = w - 14;
+        int compassY = 14;
+        _canvas.drawCircle(compassX, compassY, 10, accent);
+        float headRad = heading * 0.01745f; // deg to rad
+        int nx = compassX + sin(headRad) * 8;
+        int ny = compassY - cos(headRad) * 8;
+        _canvas.drawLine(compassX, compassY, nx, ny, accent);
 
         _canvas.pushSprite(0, 0);
     }
