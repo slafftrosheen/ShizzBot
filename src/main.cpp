@@ -17,13 +17,92 @@
 #include "sounds.h"
 #include "face.h"
 #include "ir_control.h"
+#include <AsyncUDP.h>
+#include "bme_sensor.h"
+#include "mic_sensor.h"
 
 Preferences prefs;
 bool configDirty = false;
 
+AsyncUDP udp;
+BME680Sensor bme;
+MicSensor mic;
+
+bool sentryMode = false;
+bool autoPatrol = false;
+int tamagotchiEnergy = 100;
+int tamagotchiHappiness = 100;
+bool isSleeping = false;
+
+struct MacroStep {
+    unsigned long timeOffset;
+    int throttle;
+    int steer;
+    int armB, armL, armG;
+};
+MacroStep pathMacro[100];
+int macroCount = 0;
+bool isRecordingMacro = false;
+bool isPlayingMacro = false;
+unsigned long macroStartMs = 0;
+int macroPlayIdx = 0;
+
 // ===== ROBOT IDENTITY =========================================
 String robotName = "ShizzBot";
 int robotColor = 0;    // 0=cyan(boy), 1=magenta(girl), 2=lime, 3=orange
+
+// Gamification
+int32_t score = 0;
+
+// Phase 7 States
+float odomX = 0.0f;
+float odomY = 0.0f;
+bool mirrorBroadcast = false;
+bool mirrorMode = false;
+bool isZombie = false;
+unsigned long lastZombieSnd = 0;
+bool hasPotato = false;
+long potatoTimerLeft = 0;
+unsigned long lastPotatoTick = 0;
+unsigned long lastOdomUpdate = 0;
+
+void broadcastSwarm(String event) {
+    if(WiFi.status() == WL_CONNECTED) {
+        JsonDocument doc;
+        doc["from"] = robotName;
+        doc["event"] = event;
+        String out;
+        serializeJson(doc, out);
+        udp.broadcastTo(out.c_str(), 8888);
+    }
+}
+
+void broadcastMirror(int t, int s, int aB, int aL, int aG) {
+    if(WiFi.status() == WL_CONNECTED) {
+        JsonDocument doc;
+        doc["from"] = robotName;
+        doc["event"] = "mirror";
+        doc["t"] = t; doc["s"] = s;
+        doc["aB"] = aB; doc["aL"] = aL; doc["aG"] = aG;
+        String out;
+        serializeJson(doc, out);
+        udp.broadcastTo(out.c_str(), 8888);
+    }
+}
+
+void broadcastLeaderboard() {
+    if(WiFi.status() == WL_CONNECTED) {
+        JsonDocument doc;
+        doc["from"] = robotName;
+        doc["event"] = "leaderboard";
+        doc["score"] = score;
+        doc["batt"] = M5.Power.getBatteryLevel();
+        doc["hap"] = tamagotchiHappiness;
+        String out;
+        serializeJson(doc, out);
+        udp.broadcastTo(out.c_str(), 8888);
+    }
+}
 
 // ===== MODES ==================================================
 bool stealthMode = false;
@@ -72,9 +151,6 @@ float imuPitch = 0, imuRoll = 0;
 unsigned long lastImuUs = 0;
 
 bool motorOk = false;
-
-// Gamification
-int32_t score = 0;
 
 // ===== DISPLAY ================================================
 void drawStatus(const char* msg) {
@@ -155,6 +231,8 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
             if (strcmp(cmd, "m") == 0) {
                 cmdThrottle = constrain((int)doc["t"], -100, 100);
                 cmdSteer = constrain((int)doc["s"], -100, 100);
+                if (abs(cmdThrottle) < 8) cmdThrottle = 0; // Deadband
+                if (abs(cmdSteer) < 8) cmdSteer = 0;       // Deadband
                 lastCmdTime = millis();
                 applyMotor(cmdThrottle);
                 
@@ -180,6 +258,11 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
             else if (strcmp(cmd, "stop") == 0) {
                 emergencyStop();
                 Serial.println("[!] WS Emergency Stop");
+            }
+            else if (strcmp(cmd, "swarm_estop") == 0) {
+                emergencyStop();
+                Serial.println("[!] WS Swarm E-Stop Initiated");
+                broadcastSwarm("swarm_estop");
             }
             // === CONFIG ===
             else if (strcmp(cmd, "cfg") == 0) {
@@ -253,6 +336,8 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
             // === HEADING CALIBRATE ===
             else if (strcmp(cmd, "zero") == 0) {
                 imuFilter.resetHeading();
+                odomX = 0;
+                odomY = 0;
             }
             // === SOUNDS ===
             else if (strcmp(cmd, "snd") == 0) {
@@ -295,6 +380,56 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
                 }
                 configDirty = true;
             }
+            // === SWARM / AUTO ===
+            else if (strcmp(cmd, "sentry") == 0) {
+                sentryMode = (doc["v"] == 1);
+                Serial.printf("[SENTRY] %s\n", sentryMode ? "ARMED" : "DISARMED");
+            }
+            else if (strcmp(cmd, "patrol") == 0) {
+                autoPatrol = (doc["v"] == 1);
+                Serial.printf("[PATROL] %s\n", autoPatrol ? "ON" : "OFF");
+                if (autoPatrol) {
+                    headingLockActive = true;
+                    targetHeading = imuFilter.heading;
+                }
+            }
+            else if (strcmp(cmd, "rec") == 0) {
+                isRecordingMacro = true;
+                isPlayingMacro = false;
+                macroCount = 0;
+                macroStartMs = millis();
+                Serial.println("[MACRO] Recording started");
+            }
+            else if (strcmp(cmd, "play") == 0) {
+                isRecordingMacro = false;
+                isPlayingMacro = true;
+                macroStartMs = millis();
+                macroPlayIdx = 0;
+                Serial.println("[MACRO] Playback started");
+                broadcastSwarm("swarm_macro_play");
+            }
+            // === ZOMBIE TAG ===
+            else if (strcmp(cmd, "zombie") == 0) {
+                isZombie = true;
+                robotFace.setEmotion(RobotFace::ANGRY);
+                soundEngine.playError();
+                Serial.println("[ZOMBIE] Tag started. I am IT.");
+            }
+            // === HOT POTATO ===
+            else if (strcmp(cmd, "potato") == 0) {
+                hasPotato = true;
+                potatoTimerLeft = 60000;
+                lastPotatoTick = millis();
+                Serial.println("[POTATO] Spawned. Timer: 60s");
+            }
+            // === MIRRORING ===
+            else if (strcmp(cmd, "mirrorB") == 0) {
+                mirrorBroadcast = (doc["v"] == 1);
+            }
+            else if (strcmp(cmd, "mirrorM") == 0) {
+                mirrorMode = (doc["v"] == 1);
+                if (!mirrorMode) emergencyStop();
+            }
             // === WIFI ===
             else if (strcmp(cmd, "wifi") == 0) {
                 const char* s = doc["s"];
@@ -315,7 +450,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
 void pushTelemetry() {
     if (ws.count() == 0) return;
 
-    char buf[512];
+    char buf[1024];
     snprintf(buf, sizeof(buf),
         "{\"v\":%d,\"t\":%d,\"rpm\":%d,\"cur\":%d,"
         "\"p\":%d,\"r\":%d,\"hdg\":%d,\"hdgLck\":%d,"
@@ -323,7 +458,9 @@ void pushTelemetry() {
         "\"maxSp\":%d,\"invM\":%d,\"invS\":%d,\"stealth\":%d,"
         "\"name\":\"%s\",\"color\":%d,\"score\":%d,"
         "\"steer\":%d,\"armB\":%d,\"armL\":%d,\"grip\":%d,"
-        "\"servoMax\":%d,\"fType\":%d,\"fEye\":%d,\"fBlink\":%d,\"fBounce\":%d}",
+        "\"servoMax\":%d,\"fType\":%d,\"fEye\":%d,\"fBlink\":%d,\"fBounce\":%d,"
+        "\"bmeT\":%.1f,\"bmeH\":%.1f,\"bmeA\":%d,\"mic\":%d,\"sentry\":%d,\"patrol\":%d,\"eng\":%d,\"hap\":%d,"
+        "\"odX\":%.2f,\"odY\":%.2f}",
         telVoltMV,
         telTempRaw,
         telRpm,
@@ -352,7 +489,10 @@ void pushTelemetry() {
         robotFace.faceType,
         robotFace.eyeRadius,
         robotFace.blinkRate,
-        robotFace.bounceFactor
+        robotFace.bounceFactor,
+        bme.temp, bme.hum, bme.airQuality, mic.noiseLevel,
+        sentryMode?1:0, autoPatrol?1:0, tamagotchiEnergy, tamagotchiHappiness,
+        odomX, odomY
     );
     ws.textAll(buf);
 }
@@ -398,6 +538,9 @@ void setup() {
     Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(100000);
     delay(100);
+    
+    bme.init();
+    mic.init();
 
     // Motor (single rear-axle)
     drawStatus("Motor...");
@@ -447,6 +590,59 @@ void setup() {
         WiFi.softAP("ShizzBot", "shizzbot123");
         ip = WiFi.softAPIP().toString();
         Serial.printf("[WiFi] AP IP: %s\n", ip.c_str());
+    }
+
+    if (udp.listen(8888)) {
+        udp.onPacket([](AsyncUDPPacket packet) {
+            String msg = packet.readString();
+            JsonDocument doc;
+            if (!deserializeJson(doc, msg)) {
+                String from = doc["from"] | "unknown";
+                String event = doc["event"] | "none";
+                if (from != robotName) {
+                    Serial.printf("[SWARM] RX from %s: %s\n", from.c_str(), event.c_str());
+                    if (event == "swarm_estop") {
+                        emergencyStop();
+                        robotFace.setEmotion(RobotFace::SURPRISED);
+                        soundEngine.playError();
+                        Serial.println("[SWARM] E-STOP RECEIVED!");
+                    } else if (event == "crash" && !isDancing && !autoPatrol) {
+                        emergencyStop();
+                        robotFace.setEmotion(RobotFace::SURPRISED);
+                        soundEngine.playError();
+                    } else if (event == "sentry_breach") {
+                        if (sentryMode) {
+                            robotFace.setEmotion(RobotFace::ANGRY);
+                            soundEngine.playScan(); // Chain reaction alarm
+                        } else {
+                            robotFace.setEmotion(RobotFace::SURPRISED);
+                        }
+                    } else if (event == "swarm_macro_play" && macroCount > 0 && !isRecordingMacro) {
+                        isPlayingMacro = true;
+                        macroStartMs = millis();
+                        macroPlayIdx = 0;
+                        Serial.println("[SWARM] Synced macro playback started");
+                    } else if (event == "zombie_tag" && !isZombie) {
+                        isZombie = true;
+                        hasPotato = false; // Mutually exclusive
+                        robotFace.setEmotion(RobotFace::ANGRY);
+                        soundEngine.playError();
+                        Serial.println("[ZOMBIE] I was tagged! I am IT.");
+                    } else if (event == "pass_potato" && !hasPotato) {
+                        hasPotato = true;
+                        isZombie = false; // Mutually exclusive
+                        potatoTimerLeft = doc["time_left"] | 60000;
+                        if (potatoTimerLeft < 0) potatoTimerLeft = 0;
+                        lastPotatoTick = millis();
+                        Serial.println("[POTATO] Caught the potato!");
+                    } else if (event == "mirror" && mirrorMode) {
+                        applyMotor(doc["t"] | 0);
+                        servos.setSteer(doc["s"] | 0);
+                        servos.setArm(doc["aB"] | 0, doc["aL"] | 0, doc["aG"] | 0);
+                    }
+                }
+            }
+        });
     }
 
     // WebSocket
@@ -510,11 +706,210 @@ void loop() {
     if (millis() - lastBattCheck > 5000) {
         lastBattCheck = millis();
         int batt = M5.Power.getBatteryLevel();
-        if (batt < 20 && actualOut == 0 && !isDancing) {
+        if (batt < 20 && actualOut == 0 && !isDancing && !autoPatrol) {
+            isSleeping = true;
             robotFace.setEmotion(RobotFace::SLEEPY);
             if (random(100) < 10 && !stealthMode) soundEngine.playError();
-        } else if (batt >= 20 && robotFace.getEmotion() == RobotFace::SLEEPY) {
+        } else if (batt >= 20 && isSleeping) {
+            isSleeping = false;
             robotFace.setEmotion(RobotFace::IDLE);
+        }
+    }
+
+    // Sensors Update
+    bme.update();
+    mic.update();
+
+    if (mic.loudNoiseDetected && actualOut == 0 && !isDancing) {
+        robotFace.setEmotion(RobotFace::SURPRISED);
+        soundEngine.playChirp();
+        tamagotchiHappiness += 10;
+        if(tamagotchiHappiness > 100) tamagotchiHappiness = 100;
+        isSleeping = false;
+    }
+
+    // IMU Crash & Sentry
+    static float lastAccelMag = 1.0f;
+    auto data = M5.Imu.getImuData();
+    float accelMag = sqrt(data.accel.x*data.accel.x + data.accel.y*data.accel.y + data.accel.z*data.accel.z);
+    if (abs(accelMag - lastAccelMag) > 0.6f) { // roughly 1.6G spike
+        if (sentryMode) {
+            soundEngine.playScan();
+            robotFace.setEmotion(RobotFace::ANGRY);
+            broadcastSwarm("sentry_breach");
+        } else if (abs(actualOut) > 20) {
+            // Collision!
+            emergencyStop();
+            
+            if (isZombie) {
+                isZombie = false;
+                broadcastSwarm("zombie_tag");
+                robotFace.setEmotion(RobotFace::HAPPY);
+                Serial.println("[ZOMBIE] Tagged someone else!");
+            } else if (hasPotato) {
+                hasPotato = false;
+                JsonDocument doc;
+                doc["from"] = robotName;
+                doc["event"] = "pass_potato";
+                doc["time_left"] = potatoTimerLeft;
+                String out; serializeJson(doc, out);
+                udp.broadcastTo(out.c_str(), 8888);
+                robotFace.setEmotion(RobotFace::HAPPY);
+                Serial.println("[POTATO] Passed the potato!");
+            } else {
+                robotFace.setEmotion(RobotFace::ANGRY);
+                soundEngine.playError();
+                broadcastSwarm("crash");
+                tamagotchiHappiness -= 20;
+            }
+            
+            cmdThrottle = -50; // auto reverse
+            applyMotor(cmdThrottle);
+            delay(300);
+            emergencyStop();
+        }
+    }
+    lastAccelMag = accelMag;
+
+    // Tamagotchi update (every 1s)
+    static unsigned long lastTama = 0;
+    if (millis() - lastTama > 1000) {
+        lastTama = millis();
+        if (actualOut != 0 || isDancing || autoPatrol) {
+            tamagotchiHappiness++;
+            tamagotchiEnergy--;
+            isSleeping = false;
+        } else {
+            tamagotchiHappiness--;
+            tamagotchiEnergy++;
+        }
+        
+        // Air quality penalty
+        if (bme.airQuality < 30) {
+            tamagotchiHappiness -= 2; // Extra decay for bad air
+        }
+        
+        tamagotchiHappiness = constrain(tamagotchiHappiness, 0, 100);
+        tamagotchiEnergy = constrain(tamagotchiEnergy, 0, 100);
+
+        if (bme.airQuality < 40 && !isSleeping && !stealthMode) {
+            robotFace.setEmotion(RobotFace::DIZZY);
+        } else if (tamagotchiHappiness < 20 && !isSleeping && !stealthMode) {
+            robotFace.setEmotion(RobotFace::ANGRY);
+        }
+        
+        // 1Hz Leaderboard Broadcast
+        broadcastLeaderboard();
+    }
+    
+    // 10Hz Update Loop (Odometry, Mirroring, Potato)
+    if (millis() - lastOdomUpdate > 100) {
+        float dt = (millis() - lastOdomUpdate) / 1000.0f;
+        lastOdomUpdate = millis();
+        
+        // Odometry
+        float hdgRad = imuFilter.heading * (PI / 180.0f);
+        float speed = (float)telRpm * 0.01f; // Arbitrary units for radar visual
+        odomX += speed * cos(hdgRad) * dt;
+        odomY += speed * sin(hdgRad) * dt;
+        
+        // Mirror Broadcast
+        if (mirrorBroadcast) {
+            broadcastMirror(cmdThrottle, cmdSteer, servos.armBaseSpeed, servos.armLiftSpeed, servos.gripSpeed);
+        }
+        
+        // Zombie Grumble
+        if (isZombie && millis() - lastZombieSnd > 4000) {
+            lastZombieSnd = millis();
+            if(!stealthMode) soundEngine.playReverseBeep(); // Substitute for grumble
+        }
+        
+        // Hot Potato Logic
+        if (hasPotato) {
+            long passed = millis() - lastPotatoTick;
+            lastPotatoTick = millis();
+            potatoTimerLeft -= passed;
+            if (potatoTimerLeft < 0) potatoTimerLeft = 0; // Clamp
+            
+            if (potatoTimerLeft <= 0) {
+                hasPotato = false;
+                emergencyStop();
+                soundEngine.playError();
+                robotFace.setEmotion(RobotFace::DIZZY);
+                tamagotchiHappiness -= 50;
+                Serial.println("[POTATO] BOOM! You held the potato too long.");
+            } else {
+                // Ticking sound increases frequency
+                int tickRate = map(potatoTimerLeft, 0, 60000, 200, 1500);
+                static unsigned long lastTickSound = 0;
+                if (millis() - lastTickSound > tickRate) {
+                    lastTickSound = millis();
+                    if(!stealthMode) soundEngine.playChirp(); // Tick
+                }
+            }
+        }
+    }
+
+    // Path Recording
+    if (isRecordingMacro && macroCount < 100) {
+        static unsigned long lastRec = 0;
+        if (millis() - lastRec > 100) {
+            lastRec = millis();
+            pathMacro[macroCount].timeOffset = millis() - macroStartMs;
+            pathMacro[macroCount].throttle = actualOut;
+            pathMacro[macroCount].steer = servos.steerSpeed;
+            pathMacro[macroCount].armB = servos.armBaseSpeed;
+            pathMacro[macroCount].armL = servos.armLiftSpeed;
+            pathMacro[macroCount].armG = servos.gripSpeed;
+            macroCount++;
+            if (macroCount >= 100) isRecordingMacro = false;
+        }
+    }
+
+    // Path Playback
+    if (isPlayingMacro) {
+        unsigned long t = millis() - macroStartMs;
+        while (macroPlayIdx < macroCount && pathMacro[macroPlayIdx].timeOffset <= t) {
+            applyMotor(pathMacro[macroPlayIdx].throttle);
+            servos.setSteer(pathMacro[macroPlayIdx].steer);
+            servos.setArm(pathMacro[macroPlayIdx].armB, pathMacro[macroPlayIdx].armL, pathMacro[macroPlayIdx].armG);
+            macroPlayIdx++;
+        }
+        if (macroPlayIdx >= macroCount) {
+            isPlayingMacro = false;
+            emergencyStop();
+        }
+    }
+
+    // Auto Patrol
+    if (autoPatrol) {
+        static unsigned long patrolStateTime = 0;
+        static int patrolState = 0; // 0=drive, 1=turn
+        unsigned long pt = millis() - patrolStateTime;
+        
+        if (patrolState == 0) { // Drive straight
+            headingLockActive = true;
+            if (actualOut == 0) applyMotor(maxRpm > 0 ? 50 : 0);
+            if (pt > 2000) {
+                patrolState = 1;
+                patrolStateTime = millis();
+                targetHeading += 90;
+                while(targetHeading >= 360) targetHeading -= 360;
+                emergencyStop();
+                headingLockActive = true;
+            }
+        } else if (patrolState == 1) { // Turn until heading matched
+            float err = targetHeading - imuFilter.heading;
+            while(err <= -180.0f) err += 360.0f;
+            while(err > 180.0f) err -= 360.0f;
+            if (abs(err) < 5.0f) {
+                patrolState = 0;
+                patrolStateTime = millis();
+                emergencyStop();
+            } else {
+                applyMotor(0); // keep stopped
+                servos.setSteer(err > 0 ? 100 : -100);
+            }
         }
     }
 

@@ -129,7 +129,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;
 .arm-slider .arm-val{font-family:'Orbitron',sans-serif;font-size:14px;color:var(--accent);width:35px;text-align:center}
 
 /* SENSOR CARDS */
-.tgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.tgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px}
 .tcard{text-align:center;padding:8px 4px;border-radius:4px;
   background:rgba(0,240,255,.03);border:1px solid rgba(0,240,255,.06)}
 .tcard-icon{font-size:20px;margin-bottom:4px}
@@ -158,7 +158,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;
 .cfg-row-label{font-size:12px;color:var(--txt)}
 
 input[type=range]{-webkit-appearance:none;width:100%;height:6px;border-radius:3px;
-  background:rgba(0,240,255,.1);outline:none;margin:8px 0}
+  background:rgba(0,240,255,.1);outline:none;margin:8px 0;touch-action:pan-y}
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;
   border-radius:50%;background:var(--accent);box-shadow:var(--glow-accent);cursor:pointer}
 
@@ -332,6 +332,16 @@ input[type=text],input[type=password],select{width:100%;box-sizing:border-box;pa
 
 <!-- ============ FUN TAB ============ -->
 <div class="page" id="pg-emotes">
+
+  <div class="pnl">
+    <div class="corner-bl"></div><div class="corner-br"></div>
+    <div class="pnl-title">Swarm Mini-Games</div>
+    <div class="actions" style="grid-template-columns:1fr 1fr; gap:10px; margin-bottom:15px">
+      <button class="act act-fwd" onclick="wsSend({c:'zombie'})" style="border-color:var(--lime);color:var(--lime)">🧟 ZOMBIE TAG</button>
+      <button class="act act-rev" onclick="wsSend({c:'potato'})" style="border-color:var(--orange);color:var(--orange)">🥔 HOT POTATO</button>
+    </div>
+  </div>
+
   <div class="pnl">
     <div class="corner-bl"></div><div class="corner-br"></div>
     <div class="pnl-title">Soundboard</div>
@@ -357,7 +367,11 @@ input[type=text],input[type=password],select{width:100%;box-sizing:border-box;pa
 
   <div class="pnl">
     <div class="corner-bl"></div><div class="corner-br"></div>
-    <div class="pnl-title">Macros</div>
+    <div class="pnl-title">Macros & Patrolling</div>
+    <div class="actions" style="grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">
+      <button class="act act-horn" onclick="wsSend({c:'rec'})" id="btn-rec">🔴 RECORD 10s</button>
+      <button class="act act-spin" onclick="wsSend({c:'play'})" id="btn-play">▶️ PLAY MACRO</button>
+    </div>
     <div class="actions" style="grid-template-columns:1fr;">
       <button class="act act-horn" onclick="wsSend({c:'dance'})" style="padding:15px; font-size:16px;">🕺 DANCE SEQUENCE</button>
     </div>
@@ -429,26 +443,68 @@ input[type=text],input[type=password],select{width:100%;box-sizing:border-box;pa
       <label class="toggle"><input type="checkbox" id="cfg-stealth" onchange="sendCfg()">
         <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
     </div>
+    <div class="cfg-row">
+      <span class="cfg-row-label" style="color:var(--red)">Sentry Mode (Alarm)</span>
+      <label class="toggle"><input type="checkbox" id="cfg-sentry" onchange="wsSend({c:'sentry',v:this.checked?1:0})">
+        <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+    </div>
+    <div class="cfg-row">
+      <span class="cfg-row-label" style="color:var(--accent)">Auto Patrol Mode</span>
+      <label class="toggle"><input type="checkbox" id="cfg-patrol" onchange="wsSend({c:'patrol',v:this.checked?1:0})">
+        <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+    </div>
+    <div class="cfg-row" style="margin-top:10px; border-top:1px solid rgba(0,240,255,0.1); padding-top:10px;">
+      <span class="cfg-row-label" style="color:var(--lime)">📡 Broadcast Moves (Mirror)</span>
+      <label class="toggle"><input type="checkbox" id="cfg-mirrorB" onchange="wsSend({c:'mirrorB',v:this.checked?1:0})">
+        <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+    </div>
+    <div class="cfg-row">
+      <span class="cfg-row-label" style="color:var(--magenta)">🤖 Mirror Mode (Follow)</span>
+      <label class="toggle"><input type="checkbox" id="cfg-mirrorM" onchange="wsSend({c:'mirrorM',v:this.checked?1:0})">
+        <div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+    </div>
   </div>
 
   <div class="pnl">
     <div class="corner-bl"></div><div class="corner-br"></div>
     <div class="pnl-title">Sensors</div>
     <div class="tgrid">
-      <div class="tcard" id="tc-volt"><div class="tcard-icon">⚡</div>
+      <div class="tcard"><div class="tcard-icon">⚡</div>
         <div class="tcard-lbl">Volts</div><div class="tcard-val"><span id="tv-v">--</span><span class="tcard-unit">V</span></div></div>
-      <div class="tcard" id="tc-temp"><div class="tcard-icon">🌡️</div>
-        <div class="tcard-lbl">Temp</div><div class="tcard-val"><span id="tv-t">--</span><span class="tcard-unit">°C</span></div></div>
-      <div class="tcard" id="tc-rpm"><div class="tcard-icon">⚙️</div>
-        <div class="tcard-lbl">RPM</div><div class="tcard-val" id="tv-rpm">--</div></div>
+      <div class="tcard"><div class="tcard-icon">🌡️</div>
+        <div class="tcard-lbl">Air Temp</div><div class="tcard-val"><span id="tv-bmeT">--</span><span class="tcard-unit">°C</span></div></div>
+      <div class="tcard"><div class="tcard-icon">💧</div>
+        <div class="tcard-lbl">Humidity</div><div class="tcard-val" id="tv-bmeH">--<span class="tcard-unit">%</span></div></div>
+      <div class="tcard"><div class="tcard-icon">💨</div>
+        <div class="tcard-lbl">Air Quality</div><div class="tcard-val" id="tv-bmeA">--<span class="tcard-unit">%</span></div></div>
+      <div class="tcard"><div class="tcard-icon">🎤</div>
+        <div class="tcard-lbl">Noise Level</div><div class="tcard-val" id="tv-mic">--<span class="tcard-unit">%</span></div></div>
       <div class="tcard"><div class="tcard-icon">🧭</div>
         <div class="tcard-lbl">Heading</div><div class="tcard-val" id="tv-hdg">--<span class="tcard-unit">°</span></div></div>
-      <div class="tcard"><div class="tcard-icon">📐</div>
-        <div class="tcard-lbl">Pitch</div><div class="tcard-val" id="tv-pitch">--<span class="tcard-unit">°</span></div></div>
       <div class="tcard"><div class="tcard-icon">🔋</div>
-        <div class="tcard-lbl">Current</div><div class="tcard-val" id="tv-cur">--<span class="tcard-unit">mA</span></div></div>
+        <div class="tcard-lbl">Battery</div><div class="tcard-val"><span id="batt-txt2">--</span><span class="tcard-unit">%</span></div></div>
+      <div class="tcard" style="grid-column: span 3;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:4px; align-items:center;">
+           <span class="tcard-lbl" style="font-size:11px;">❤️ Energy</span><span class="tcard-val" id="tv-eng" style="font-size:14px;">--%</span>
+        </div>
+        <div style="width:100%; height:8px; background:rgba(255,255,255,0.1); border-radius:4px; overflow:hidden;">
+           <div id="bar-eng" style="width:50%; height:100%; background:var(--accent); transition:width 0.3s;"></div>
+        </div>
+      </div>
+      <div class="tcard" style="grid-column: span 3;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:4px; align-items:center;">
+           <span class="tcard-lbl" style="font-size:11px;">😊 Happiness</span><span class="tcard-val" id="tv-hap" style="font-size:14px;">--%</span>
+        </div>
+        <div style="width:100%; height:8px; background:rgba(255,255,255,0.1); border-radius:4px; overflow:hidden;">
+           <div id="bar-hap" style="width:50%; height:100%; background:var(--magenta); transition:width 0.3s;"></div>
+        </div>
+      </div>
     </div>
     <button class="act act-spin" onclick="wsSend({c:'zero'})" style="width:100%;margin-top:8px">🧭 ZERO HEADING</button>
+    <div style="margin-top:15px;">
+      <div class="pnl-title" style="text-align:center;">Radar Odometry</div>
+      <canvas id="radar" width="200" height="200" style="width:100%; max-width:200px; aspect-ratio:1; display:block; margin:0 auto; background:rgba(0,240,255,0.02); border:1px solid rgba(0,240,255,0.2); border-radius:50%;"></canvas>
+    </div>
   </div>
 
   <div class="pnl">
@@ -477,8 +533,9 @@ input[type=text],input[type=password],select{width:100%;box-sizing:border-box;pa
 </div><!-- /content -->
 
 <!-- ESTOP FOOTER -->
-<div class="estop-bar">
-  <button class="estop" id="btn-estop">🛑 EMERGENCY STOP</button>
+<div class="estop-bar" style="display:flex; gap:10px;">
+  <button class="estop" id="btn-estop" style="flex:2">🛑 LOCAL STOP</button>
+  <button class="estop" id="btn-swarm-estop" style="flex:1; background:rgba(255,100,0,0.1); border-color:var(--orange); color:var(--orange);" onclick="wsSend({c:'swarm_estop'})">🛑 SWARM</button>
 </div>
 
 <script>
@@ -551,19 +608,24 @@ function wsConnect(){
       // Voltage
       const volts=(d.v/1000).toFixed(1);
       document.getElementById('tv-v').textContent=volts;
-      const vc=document.getElementById('tc-volt');
-      vc.classList.toggle('warn',d.v<11000&&d.v>0);
-      vc.classList.toggle('danger',d.v<10000&&d.v>0);
 
-      // Temp
-      const temp=(d.t/10).toFixed(1);
-      document.getElementById('tv-t').textContent=temp;
-
-      // RPM
-      document.getElementById('tv-rpm').textContent=d.rpm;
-
-      // Current
-      document.getElementById('tv-cur').textContent=d.cur;
+      // Environment & Sensors
+      if(d.bmeT !== undefined) document.getElementById('tv-bmeT').textContent=d.bmeT.toFixed(1);
+      if(d.bmeH !== undefined) document.getElementById('tv-bmeH').textContent=d.bmeH.toFixed(1)+'%';
+      if(d.bmeA !== undefined) document.getElementById('tv-bmeA').textContent=d.bmeA+'%';
+      if(d.mic !== undefined) document.getElementById('tv-mic').textContent=d.mic+'%';
+      
+      // Tamagotchi
+      if(d.eng !== undefined) {
+         document.getElementById('tv-eng').textContent=d.eng+'%';
+         const bE = document.getElementById('bar-eng');
+         if(bE) { bE.style.width = d.eng+'%'; bE.style.background = d.eng < 20 ? 'var(--red)' : 'var(--accent)'; }
+      }
+      if(d.hap !== undefined) {
+         document.getElementById('tv-hap').textContent=d.hap+'%';
+         const bH = document.getElementById('bar-hap');
+         if(bH) { bH.style.width = d.hap+'%'; bH.style.background = d.hap < 20 ? 'var(--red)' : 'var(--magenta)'; }
+      }
 
       // Heading
       const hdg = (d.hdg/10).toFixed(0);
@@ -581,12 +643,34 @@ function wsConnect(){
         }
       }
 
-      // Pitch
-      document.getElementById('tv-pitch').textContent=(d.p/10).toFixed(1);
+      // Radar Odometry
+      if(d.odX !== undefined && d.odY !== undefined) {
+         const cvs = document.getElementById('radar');
+         if(cvs) {
+            const ctx = cvs.getContext('2d');
+            const w = cvs.width, h = cvs.height;
+            // Clear but leave a fading trail
+            ctx.fillStyle = 'rgba(6,11,24,0.1)';
+            ctx.fillRect(0,0,w,h);
+            
+            // Map odX, odY to canvas (center is 0,0, scale is arbitrary, let's say 1 unit = 2 pixels)
+            const cx = w/2 + (d.odX * 2);
+            const cy = h/2 - (d.odY * 2); // Invert Y
+            
+            // Draw bot position
+            ctx.beginPath();
+            ctx.arc(cx, cy, 4, 0, Math.PI*2);
+            ctx.fillStyle = 'var(--accent)';
+            ctx.fill();
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = 'var(--accent)';
+         }
+      }
 
       // Battery
       if (d.batt !== undefined) {
         document.getElementById('batt-txt').textContent = d.batt + '%';
+        if(document.getElementById('batt-txt2')) document.getElementById('batt-txt2').textContent = d.batt;
         const bb = document.getElementById('batt-badge');
         bb.style.borderColor = d.batt < 20 ? 'rgba(255,34,68,.8)' : 'rgba(255,136,0,.4)';
         bb.style.color = d.batt < 20 ? 'var(--red)' : 'var(--orange)';
@@ -609,6 +693,9 @@ function wsConnect(){
         document.getElementById('cfg-invM').checked = (d.invM === 1);
         document.getElementById('cfg-invS').checked = (d.invS === 1);
         document.getElementById('cfg-stealth').checked = (d.stealth === 1);
+        if(d.sentry !== undefined) document.getElementById('cfg-sentry').checked = (d.sentry === 1);
+        if(d.patrol !== undefined) document.getElementById('cfg-patrol').checked = (d.patrol === 1);
+        
         document.getElementById('maxsp').value = d.maxSp;
         document.getElementById('maxsp-v').textContent = d.maxSp + '%';
         document.getElementById('servomax').value = d.servoMax;
@@ -709,6 +796,11 @@ joy.addEventListener('pointerdown',e=>{joyActive=true;thumb.classList.add('activ
 joy.addEventListener('pointermove',e=>{if(joyActive)joyMove(e.clientX,e.clientY);});
 joy.addEventListener('pointerup',()=>{joyActive=false;joyReset();});
 joy.addEventListener('pointercancel',()=>{joyActive=false;joyReset();});
+
+joy.addEventListener('touchstart',e=>{e.preventDefault();joyActive=true;thumb.classList.add('active');joyMove(e.touches[0].clientX,e.touches[0].clientY);},{passive:false});
+joy.addEventListener('touchmove',e=>{e.preventDefault();if(joyActive)joyMove(e.touches[0].clientX,e.touches[0].clientY);},{passive:false});
+joy.addEventListener('touchend',e=>{e.preventDefault();joyActive=false;joyReset();},{passive:false});
+joy.addEventListener('touchcancel',e=>{e.preventDefault();joyActive=false;joyReset();},{passive:false});
 
 // Send motor+steer at max 20Hz
 let lastSentT = null, lastSentS = null;
