@@ -1,7 +1,8 @@
 // ============================================================
-// ShizzBot Swarm - Main Firmware v3
-// Single motor + steering servo + 3 arm servos
-// WebSocket control, IMU heading, robot identity
+// ShizzBot Swarm - Main Firmware v4 (Kids World Mega)
+// Single motor + steering servo + pan/tilt servos
+// WebSocket control, IMU heading, robot identity,
+// Achievements, Story Mode, Pet Mode, RGB Effects, Music Box
 // ============================================================
 #include <M5Unified.h>
 #include <WiFi.h>
@@ -20,6 +21,10 @@
 #include <AsyncUDP.h>
 #include "bme_sensor.h"
 #include "mic_sensor.h"
+#include "achievements.h"
+#include "story_mode.h"
+#include "pet_mode.h"
+#include "rgb_effects.h"
 
 Preferences prefs;
 bool configDirty = false;
@@ -38,7 +43,7 @@ struct MacroStep {
     unsigned long timeOffset;
     int throttle;
     int steer;
-    int armB, armL, armG;
+    int pan, tilt;
 };
 MacroStep pathMacro[100];
 int macroCount = 0;
@@ -77,13 +82,13 @@ void broadcastSwarm(String event) {
     }
 }
 
-void broadcastMirror(int t, int s, int aB, int aL, int aG) {
+void broadcastMirror(int t, int s, int p, int ti) {
     if(WiFi.status() == WL_CONNECTED) {
         JsonDocument doc;
         doc["from"] = robotName;
         doc["event"] = "mirror";
         doc["t"] = t; doc["s"] = s;
-        doc["aB"] = aB; doc["aL"] = aL; doc["aG"] = aG;
+        doc["p"] = p; doc["ti"] = ti;
         String out;
         serializeJson(doc, out);
         udp.broadcastTo(out.c_str(), 8888);
@@ -108,6 +113,22 @@ void broadcastLeaderboard() {
 bool stealthMode = false;
 bool isDancing = false;
 unsigned long danceStartTime = 0;
+int danceRoutine = 0;  // 0=disco, 1=robot, 2=wiggle, 3=moonwalk
+int dancePhase = 0;
+bool isMacroAction = false;
+unsigned long macroActionStart = 0;
+String currentMacro = "";
+int macroPhase = 0;
+
+// ===== KIDS WORLD SYSTEMS =====================================
+AchievementSystem achievements;
+StoryEngine storyEngine;
+PetEngine petEngine;
+RGBEngine rgbEngine;
+int tamagotchiHunger = 100;
+int tamagotchiXP = 0;
+int tamagotchiLevel = 0;  // 0=baby, 1=teen, 2=adult
+int emotionUsageBits = 0; // Bitmask for achievement tracking
 
 // ===== CONFIGURATION =========================================
 String wifiSSID;
@@ -316,20 +337,19 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
                 prefs.putInt("fBounce", robotFace.bounceFactor);
                 Serial.println("[FACE] Config updated & saved");
             }
-            // === ARM SERVOS ===
-            else if (strcmp(cmd, "arm") == 0) {
-                int base = doc["b"] | 0;
-                int lift = doc["l"] | 0;
-                int grip = doc["g"] | 0;
-                servos.setArm(base, lift, grip);
+            // === PAN/TILT SERVOS ===
+            else if (strcmp(cmd, "pt") == 0) {
+                int pan = doc["p"] | 0;
+                int tilt = doc["t"] | 0;
+                servos.setPanTilt(pan, tilt);
             }
-            else if (strcmp(cmd, "armPreset") == 0) {
+            else if (strcmp(cmd, "ptPreset") == 0) {
                 const char* p = doc["p"];
                 if (p) {
-                    if (strcmp(p, "park") == 0)    servos.presetPark();
-                    else if (strcmp(p, "grab") == 0)    servos.presetGrab();
-                    else if (strcmp(p, "wave") == 0)    servos.presetWave();
-                    else if (strcmp(p, "release") == 0) servos.presetRelease();
+                    if (strcmp(p, "center") == 0)  servos.presetCenter();
+                    else if (strcmp(p, "scan") == 0) servos.presetScan();
+                    else if (strcmp(p, "nod") == 0)  servos.presetNod();
+                    else if (strcmp(p, "shake") == 0) servos.presetShake();
                     score += 5;
                 }
             }
@@ -343,31 +363,132 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
             else if (strcmp(cmd, "snd") == 0) {
                 const char* s = doc["s"];
                 if (s) {
-                    if (strcmp(s, "horn") == 0) soundEngine.playHorn();
+                    if (strcmp(s, "horn") == 0) { soundEngine.playHorn(); achievements.check("honk"); }
                     else if (strcmp(s, "chirp") == 0) soundEngine.playChirp();
                     else if (strcmp(s, "scan") == 0) soundEngine.playScan();
                     else if (strcmp(s, "err") == 0) soundEngine.playError();
+                    else if (strcmp(s, "fart") == 0) { soundEngine.playFart(); achievements.check("fart"); }
+                    else if (strcmp(s, "giggle") == 0) soundEngine.playGiggle();
+                    else if (strcmp(s, "magic") == 0) soundEngine.playMagic();
+                    else if (strcmp(s, "pewpew") == 0) soundEngine.playPewPew();
+                    else if (strcmp(s, "burp") == 0) soundEngine.playBurp();
+                    else if (strcmp(s, "whoopee") == 0) soundEngine.playWhoopee();
+                    else if (strcmp(s, "alien") == 0) soundEngine.playAlienTalk();
+                    else if (strcmp(s, "drumroll") == 0) soundEngine.playDrumRoll();
+                    else if (strcmp(s, "tada") == 0) soundEngine.playTaDa();
+                    else if (strcmp(s, "boing") == 0) soundEngine.playBoing();
                     score += 1;
+                    tamagotchiXP += 1;
                 }
             }
             // === EMOTES ===
             else if (strcmp(cmd, "emo") == 0) {
                 const char* e = doc["e"];
                 if (e) {
-                    if (strcmp(e, "happy") == 0) robotFace.setEmotion(RobotFace::HAPPY);
-                    else if (strcmp(e, "angry") == 0) robotFace.setEmotion(RobotFace::ANGRY);
-                    else if (strcmp(e, "dizzy") == 0) robotFace.setEmotion(RobotFace::DIZZY);
-                    else if (strcmp(e, "surprised") == 0) robotFace.setEmotion(RobotFace::SURPRISED);
-                    else if (strcmp(e, "idle") == 0) robotFace.setEmotion(RobotFace::IDLE);
+                    // Map string to enum
+                    struct EmoMap { const char* name; RobotFace::Emotion emo; };
+                    static const EmoMap emos[] = {
+                        {"idle", RobotFace::IDLE}, {"happy", RobotFace::HAPPY},
+                        {"angry", RobotFace::ANGRY}, {"dizzy", RobotFace::DIZZY},
+                        {"surprised", RobotFace::SURPRISED}, {"love", RobotFace::LOVE},
+                        {"silly", RobotFace::SILLY}, {"cool", RobotFace::COOL},
+                        {"crying", RobotFace::CRYING}, {"ninja", RobotFace::NINJA},
+                        {"shocked", RobotFace::SHOCKED}, {"wink", RobotFace::WINK},
+                        {"bored", RobotFace::BORED}, {"party", RobotFace::PARTY},
+                        {"robot", RobotFace::ROBOT_FACE},
+                    };
+                    for (auto& em : emos) {
+                        if (strcmp(e, em.name) == 0) {
+                            robotFace.setEmotion(em.emo);
+                            emotionUsageBits |= (1 << (int)em.emo);
+                            break;
+                        }
+                    }
+                    // Count unique emotions for achievement
+                    int emoCount = 0;
+                    for (int i = 0; i < RobotFace::EMOTION_COUNT; i++) {
+                        if (emotionUsageBits & (1 << i)) emoCount++;
+                    }
+                    achievements.checkSet("emotions", emoCount);
+                    if (strcmp(e, "ninja") == 0) achievements.check("ninja");
                     score += 2;
+                    tamagotchiXP += 1;
                 }
             }
             // === DANCE ===
             else if (strcmp(cmd, "dance") == 0) {
                 isDancing = true;
                 danceStartTime = millis();
+                dancePhase = 0;
+                if (doc["r"].is<int>()) danceRoutine = constrain((int)doc["r"], 0, 3);
+                else danceRoutine = (danceRoutine + 1) % 4;
                 score += 10;
-                Serial.println("[!] DANCE MODE ACTIVATED");
+                achievements.check("dance");
+                Serial.printf("[!] DANCE ROUTINE %d\n", danceRoutine);
+            }
+            // === MACROS ===
+            else if (strcmp(cmd, "macro") == 0) {
+                const char* m = doc["m"];
+                if (m) {
+                    isMacroAction = true;
+                    macroActionStart = millis();
+                    currentMacro = String(m);
+                    macroPhase = 0;
+                }
+            }
+            // === MUSICAL NOTES ===
+            else if (strcmp(cmd, "note") == 0) {
+                int n = constrain((int)doc["n"], 0, 11);
+                soundEngine.playNote(n);
+                achievements.check("music");
+                tamagotchiXP += 1;
+                score += 1;
+            }
+            // === STORY MODE ===
+            else if (strcmp(cmd, "story") == 0) {
+                int id = constrain((int)doc["id"], 0, 2);
+                storyEngine.startStory(id);
+                score += 5;
+            }
+            // === PET MODE ===
+            else if (strcmp(cmd, "pet") == 0) {
+                const char* a = doc["a"];
+                if (a) {
+                    if (strcmp(a, "feed") == 0) { petEngine.feed(); tamagotchiXP += 2; }
+                    else if (strcmp(a, "pat") == 0) { petEngine.pet(); achievements.check("pet"); tamagotchiXP += 2; }
+                    else if (strcmp(a, "toggle") == 0) petEngine.toggle();
+                }
+            }
+            // === RGB EFFECTS ===
+            else if (strcmp(cmd, "rgb") == 0) {
+                int p = constrain((int)doc["p"], 0, 6);
+                rgbEngine.setPattern((RGBPattern)p);
+                achievements.checkSet("rgb", rgbEngine.countPatternsUsed());
+            }
+            // === SPEECH BUBBLE ===
+            else if (strcmp(cmd, "speech") == 0) {
+                const char* t = doc["t"];
+                if (t) robotFace.showSpeech(String(t));
+            }
+            // === EMOJI OVERLAY ===
+            else if (strcmp(cmd, "overlay") == 0) {
+                int e = constrain((int)doc["e"], 0, 5);
+                robotFace.showOverlay(e);
+            }
+            // === FACE CUSTOMIZER ===
+            else if (strcmp(cmd, "faceCust") == 0) {
+                if (doc["eye"].is<int>()) robotFace.eyeShape = constrain((int)doc["eye"], 0, 2);
+                if (doc["mouth"].is<int>()) robotFace.mouthStyle = constrain((int)doc["mouth"], 0, 2);
+                if (doc["acc"].is<int>()) robotFace.accessory = constrain((int)doc["acc"], 0, 3);
+                prefs.putInt("eyeShape", robotFace.eyeShape);
+                prefs.putInt("mouthSt", robotFace.mouthStyle);
+                prefs.putInt("accessory", robotFace.accessory);
+                configDirty = true;
+            }
+            // === ACHIEVEMENTS QUERY ===
+            else if (strcmp(cmd, "getAch") == 0) {
+                String json = "{\"ach\":" + achievements.toJson() + "}";
+                client->text(json);
             }
             // === STEALTH ===
             else if (strcmp(cmd, "stealth") == 0) {
@@ -450,51 +571,45 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
 void pushTelemetry() {
     if (ws.count() == 0) return;
 
-    char buf[1024];
+    char buf[1400];
     snprintf(buf, sizeof(buf),
         "{\"v\":%d,\"t\":%d,\"rpm\":%d,\"cur\":%d,"
         "\"p\":%d,\"r\":%d,\"hdg\":%d,\"hdgLck\":%d,"
         "\"ip\":\"%s\",\"ssid\":\"%s\",\"rssi\":%d,\"wc\":%u,\"batt\":%d,"
         "\"maxSp\":%d,\"invM\":%d,\"invS\":%d,\"stealth\":%d,"
         "\"name\":\"%s\",\"color\":%d,\"score\":%d,"
-        "\"steer\":%d,\"armB\":%d,\"armL\":%d,\"grip\":%d,"
+        "\"steer\":%d,\"pan\":%d,\"tilt\":%d,"
         "\"servoMax\":%d,\"fType\":%d,\"fEye\":%d,\"fBlink\":%d,\"fBounce\":%d,"
         "\"bmeT\":%.1f,\"bmeH\":%.1f,\"bmeA\":%d,\"mic\":%d,\"sentry\":%d,\"patrol\":%d,\"eng\":%d,\"hap\":%d,"
-        "\"odX\":%.2f,\"odY\":%.2f}",
-        telVoltMV,
-        telTempRaw,
-        telRpm,
-        telCur,
-        (int)(imuPitch * 10),
-        (int)(imuRoll * 10),
+        "\"odX\":%.2f,\"odY\":%.2f,"
+        "\"hunger\":%d,\"xp\":%d,\"lvl\":%d,\"petOn\":%d,\"petHunger\":%d,"
+        "\"achNew\":%d,\"achIdx\":%d,\"rgbP\":%d,\"storyOn\":%d}",
+        telVoltMV, telTempRaw, telRpm, telCur,
+        (int)(imuPitch * 10), (int)(imuRoll * 10),
         (int)(imuFilter.heading * 10),
         headingLockActive ? (int)(targetHeading * 10) : -1,
         WiFi.localIP().toString().c_str(),
-        WiFi.SSID().c_str(),
-        WiFi.RSSI(),
-        ws.count(),
+        WiFi.SSID().c_str(), WiFi.RSSI(), ws.count(),
         M5.Power.getBatteryLevel(),
         maxRpm / 30,
         motorOk ? motor.getInverted() : 0,
         servos.invertSteer ? 1 : 0,
         stealthMode ? 1 : 0,
-        robotName.c_str(),
-        robotColor,
-        score,
-        servos.steerSpeed,
-        servos.armBaseSpeed,
-        servos.armLiftSpeed,
-        servos.gripSpeed,
+        robotName.c_str(), robotColor, score,
+        servos.steerSpeed, servos.panSpeed, servos.tiltSpeed,
         servos.maxServoSpeed,
-        robotFace.faceType,
-        robotFace.eyeRadius,
-        robotFace.blinkRate,
-        robotFace.bounceFactor,
+        robotFace.faceType, robotFace.eyeRadius, robotFace.blinkRate, robotFace.bounceFactor,
         bme.temp, bme.hum, bme.airQuality, mic.noiseLevel,
         sentryMode?1:0, autoPatrol?1:0, tamagotchiEnergy, tamagotchiHappiness,
-        odomX, odomY
+        odomX, odomY,
+        tamagotchiHunger, tamagotchiXP, tamagotchiLevel,
+        petEngine.active ? 1 : 0, petEngine.hunger,
+        achievements.justUnlocked ? 1 : 0, achievements.lastUnlockedIdx,
+        (int)rgbEngine.currentPattern, storyEngine.isPlaying() ? 1 : 0
     );
     ws.textAll(buf);
+    // Clear achievement notification after sending
+    if (achievements.justUnlocked) achievements.clearNotification();
 }
 
 // ===== SETUP ==================================================
@@ -528,11 +643,23 @@ void setup() {
     robotFace.eyeRadius = prefs.getInt("fEye", 15);
     robotFace.blinkRate = prefs.getInt("fBlink", 50);
     robotFace.bounceFactor = prefs.getInt("fBounce", 50);
+    robotFace.eyeShape = prefs.getInt("eyeShape", 0);
+    robotFace.mouthStyle = prefs.getInt("mouthSt", 0);
+    robotFace.accessory = prefs.getInt("accessory", 0);
+
+    // Kids World systems
+    achievements.init(prefs);
+    petEngine.init();
     
     Serial.printf("[ID] Robot: %s (color=%d, faceType=%d)\n", robotName.c_str(), robotColor, robotFace.faceType);
 
-    wifiSSID = prefs.getString("ssid", "Sinstro_HomeLab");
-    wifiPass = prefs.getString("pass", "Dev18118810208");
+    String currentSsid = prefs.getString("ssid", "");
+    if (currentSsid == "Sinstro_HomeLab" || currentSsid == "") {
+        prefs.putString("ssid", "STARLINK.TAK");
+        prefs.putString("pass", "Slaff181188");
+    }
+    wifiSSID = prefs.getString("ssid", "STARLINK.TAK");
+    wifiPass = prefs.getString("pass", "Slaff181188");
 
     // I2C
     Wire.begin(I2C_SDA, I2C_SCL);
@@ -540,7 +667,7 @@ void setup() {
     delay(100);
     
     bme.init();
-    mic.init();
+    // mic.init(); // Disabled to fix I2S hardware conflict with Speaker
 
     // Motor (single rear-axle)
     drawStatus("Motor...");
@@ -638,7 +765,7 @@ void setup() {
                     } else if (event == "mirror" && mirrorMode) {
                         applyMotor(doc["t"] | 0);
                         servos.setSteer(doc["s"] | 0);
-                        servos.setArm(doc["aB"] | 0, doc["aL"] | 0, doc["aG"] | 0);
+                        servos.setPanTilt(doc["p"] | 0, doc["ti"] | 0);
                     }
                 }
             }
@@ -718,15 +845,7 @@ void loop() {
 
     // Sensors Update
     bme.update();
-    mic.update();
-
-    if (mic.loudNoiseDetected && actualOut == 0 && !isDancing) {
-        robotFace.setEmotion(RobotFace::SURPRISED);
-        soundEngine.playChirp();
-        tamagotchiHappiness += 10;
-        if(tamagotchiHappiness > 100) tamagotchiHappiness = 100;
-        isSleeping = false;
-    }
+    // mic.update(); // Disabled
 
     // IMU Crash & Sentry
     static float lastAccelMag = 1.0f;
@@ -792,6 +911,21 @@ void loop() {
         tamagotchiHappiness = constrain(tamagotchiHappiness, 0, 100);
         tamagotchiEnergy = constrain(tamagotchiEnergy, 0, 100);
 
+        // Hunger decay (every 60 tamagotchi ticks = 1 min)
+        static int hungerTick = 0;
+        if (++hungerTick >= 60) {
+            hungerTick = 0;
+            tamagotchiHunger = max(tamagotchiHunger - 1, 0);
+        }
+
+        // XP leveling
+        if (tamagotchiLevel == 0 && tamagotchiXP >= 100) { tamagotchiLevel = 1; Serial.println("[TAMA] Level up: TEEN!"); }
+        if (tamagotchiLevel == 1 && tamagotchiXP >= 500) { tamagotchiLevel = 2; Serial.println("[TAMA] Level up: ADULT!"); }
+
+        // Distance achievement
+        float dist = sqrt(odomX*odomX + odomY*odomY);
+        if (dist > 10.0f) achievements.check("distance");
+
         if (bme.airQuality < 40 && !isSleeping && !stealthMode) {
             robotFace.setEmotion(RobotFace::DIZZY);
         } else if (tamagotchiHappiness < 20 && !isSleeping && !stealthMode) {
@@ -815,7 +949,7 @@ void loop() {
         
         // Mirror Broadcast
         if (mirrorBroadcast) {
-            broadcastMirror(cmdThrottle, cmdSteer, servos.armBaseSpeed, servos.armLiftSpeed, servos.gripSpeed);
+            broadcastMirror(cmdThrottle, cmdSteer, servos.panSpeed, servos.tiltSpeed);
         }
         
         // Zombie Grumble
@@ -858,9 +992,8 @@ void loop() {
             pathMacro[macroCount].timeOffset = millis() - macroStartMs;
             pathMacro[macroCount].throttle = actualOut;
             pathMacro[macroCount].steer = servos.steerSpeed;
-            pathMacro[macroCount].armB = servos.armBaseSpeed;
-            pathMacro[macroCount].armL = servos.armLiftSpeed;
-            pathMacro[macroCount].armG = servos.gripSpeed;
+            pathMacro[macroCount].pan = servos.panSpeed;
+            pathMacro[macroCount].tilt = servos.tiltSpeed;
             macroCount++;
             if (macroCount >= 100) isRecordingMacro = false;
         }
@@ -872,7 +1005,7 @@ void loop() {
         while (macroPlayIdx < macroCount && pathMacro[macroPlayIdx].timeOffset <= t) {
             applyMotor(pathMacro[macroPlayIdx].throttle);
             servos.setSteer(pathMacro[macroPlayIdx].steer);
-            servos.setArm(pathMacro[macroPlayIdx].armB, pathMacro[macroPlayIdx].armL, pathMacro[macroPlayIdx].armG);
+            servos.setPanTilt(pathMacro[macroPlayIdx].pan, pathMacro[macroPlayIdx].tilt);
             macroPlayIdx++;
         }
         if (macroPlayIdx >= macroCount) {
@@ -934,30 +1067,113 @@ void loop() {
         servos.setSteer(steerCorr);
     }
 
-    // Dance Macro (single motor + steering)
+    // Dance Routines (4 varieties)
     if (isDancing) {
         unsigned long t = millis() - danceStartTime;
-        if (t < 800) {
-            cmdThrottle = 50; servos.setSteer(100);
-            robotFace.setEmotion(RobotFace::SURPRISED);
-            if (t == 0 && !stealthMode) soundEngine.playChirp();
-        } else if (t < 1600) {
-            cmdThrottle = 50; servos.setSteer(-100);
-            robotFace.setEmotion(RobotFace::HAPPY);
-        } else if (t < 2200) {
-            cmdThrottle = 100; servos.setSteer(0);
-            robotFace.setEmotion(RobotFace::ANGRY);
-            if (t >= 1600 && t < 1610 && !stealthMode) soundEngine.playHorn();
-        } else if (t < 2800) {
-            cmdThrottle = -80; servos.setSteer(0);
-            robotFace.setEmotion(RobotFace::DIZZY);
-        } else {
+        bool done = false;
+        if (danceRoutine == 0) { // Disco
+            if (dancePhase == 0) { cmdThrottle = 50; servos.setSteer(100); robotFace.setEmotion(RobotFace::PARTY); if (!stealthMode) soundEngine.playChirp(); dancePhase++; }
+            else if (dancePhase == 1 && t >= 800) { cmdThrottle = 50; servos.setSteer(-100); robotFace.setEmotion(RobotFace::HAPPY); dancePhase++; }
+            else if (dancePhase == 2 && t >= 1600) { cmdThrottle = 100; servos.setSteer(0); robotFace.setEmotion(RobotFace::COOL); if (!stealthMode) soundEngine.playHorn(); dancePhase++; }
+            else if (dancePhase == 3 && t >= 2200) { cmdThrottle = -80; servos.setSteer(0); robotFace.setEmotion(RobotFace::DIZZY); dancePhase++; }
+            else if (t >= 2800) done = true;
+        } else if (danceRoutine == 1) { // Robot Dance
+            if (dancePhase == 0) { cmdThrottle = 0; servos.setSteer(100); robotFace.setEmotion(RobotFace::ROBOT_FACE); if (!stealthMode) soundEngine.playDrumRoll(); dancePhase++; }
+            else if (dancePhase == 1 && t >= 500) { cmdThrottle = 0; servos.setSteer(-100); dancePhase++; }
+            else if (dancePhase == 2 && t >= 1000) { cmdThrottle = 60; servos.setSteer(0); servos.setPan(80); dancePhase++; }
+            else if (dancePhase == 3 && t >= 1500) { cmdThrottle = -60; servos.setSteer(0); servos.setPan(-80); dancePhase++; }
+            else if (dancePhase == 4 && t >= 2000) { cmdThrottle = 0; servos.setPan(0); servos.setTilt(60); dancePhase++; }
+            else if (dancePhase == 5 && t >= 2500) { servos.setTilt(-60); dancePhase++; }
+            else if (t >= 3000) done = true;
+        } else if (danceRoutine == 2) { // Wiggle
+            if (dancePhase == 0) { robotFace.setEmotion(RobotFace::SILLY); if (!stealthMode) soundEngine.playGiggle(); dancePhase++; }
+            if (t < 2500) {
+                int wiggle = ((t / 150) % 2 == 0) ? 80 : -80;
+                servos.setPan(wiggle);
+                cmdThrottle = 30;
+            } else done = true;
+        } else if (danceRoutine == 3) { // Moonwalk
+            if (dancePhase == 0) { robotFace.setEmotion(RobotFace::COOL); if (!stealthMode) soundEngine.playMagic(); dancePhase++; }
+            if (t < 3000) {
+                cmdThrottle = -40;
+                servos.setSteer(((t / 500) % 2 == 0) ? 30 : -30);
+            } else done = true;
+        }
+        if (done) {
             cmdThrottle = 0; cmdSteer = 0;
-            servos.setSteer(0);
+            servos.setSteer(0); servos.setPan(0); servos.setTilt(0);
             isDancing = false;
             robotFace.setEmotion(RobotFace::IDLE);
         }
         applyMotor(cmdThrottle);
+    }
+
+    // Action Macros (Non-blocking)
+    if (isMacroAction) {
+        unsigned long t = millis() - macroActionStart;
+        if (currentMacro == "fart_shake") {
+            if (macroPhase == 0) { soundEngine.playFart(); robotFace.setEmotion(RobotFace::SILLY); servos.setPan(80); macroPhase++; }
+            else if (macroPhase == 1 && t >= 200) { servos.setPan(-80); macroPhase++; }
+            else if (macroPhase == 2 && t >= 400) { servos.setPan(0); isMacroAction = false; }
+        } else if (currentMacro == "magic_reveal") {
+            if (macroPhase == 0) { soundEngine.playMagic(); robotFace.setEmotion(RobotFace::LOVE); servos.setTilt(-60); macroPhase++; }
+            else if (macroPhase == 1 && t >= 500) { servos.setTilt(60); macroPhase++; }
+            else if (macroPhase == 2 && t >= 1000) { servos.setTilt(0); isMacroAction = false; }
+        } else if (currentMacro == "victory_dance") {
+            if (macroPhase == 0) { soundEngine.playTaDa(); robotFace.setEmotion(RobotFace::HAPPY); servos.setSteer(100); macroPhase++; }
+            else if (macroPhase == 1 && t >= 600) { servos.setSteer(-100); soundEngine.playHorn(); macroPhase++; }
+            else if (macroPhase == 2 && t >= 1200) { servos.setSteer(0); isMacroAction = false; }
+        } else if (currentMacro == "tantrum") {
+            if (macroPhase == 0) { soundEngine.playFart(); robotFace.setEmotion(RobotFace::CRYING); servos.setPan(80); macroPhase++; }
+            else if (macroPhase == 1 && t >= 300) { servos.setPan(-80); macroPhase++; }
+            else if (macroPhase == 2 && t >= 600) { soundEngine.playBurp(); servos.setPan(60); macroPhase++; }
+            else if (macroPhase == 3 && t >= 900) { servos.setPan(0); isMacroAction = false; }
+        } else if (currentMacro == "sneeze") {
+            if (macroPhase == 0) { robotFace.setEmotion(RobotFace::BORED); servos.setTilt(-50); macroPhase++; }
+            else if (macroPhase == 1 && t >= 600) { servos.setTilt(80); soundEngine.playChirp(); robotFace.setEmotion(RobotFace::SURPRISED); macroPhase++; }
+            else if (macroPhase == 2 && t >= 900) { servos.setTilt(0); isMacroAction = false; }
+        } else if (currentMacro == "belly_laugh") {
+            if (macroPhase == 0) { soundEngine.playGiggle(); robotFace.setEmotion(RobotFace::SILLY); servos.setPan(60); macroPhase++; }
+            else if (macroPhase == 1 && t >= 200) { servos.setPan(-60); macroPhase++; }
+            else if (macroPhase == 2 && t >= 400) { servos.setPan(60); macroPhase++; }
+            else if (macroPhase == 3 && t >= 600) { servos.setPan(-60); macroPhase++; }
+            else if (macroPhase == 4 && t >= 800) { servos.setPan(0); isMacroAction = false; }
+        } else {
+            isMacroAction = false; // Unknown macro, stop
+        }
+    }
+
+    // Story Mode update
+    StoryStep storyStep;
+    if (storyEngine.update(storyStep)) {
+        if (storyStep.emotion >= 0) robotFace.setEmotion((RobotFace::Emotion)storyStep.emotion);
+        if (storyStep.soundIdx >= 0) soundEngine.playSoundByIndex(storyStep.soundIdx);
+        if (storyStep.panSpeed != 0) servos.setPan(storyStep.panSpeed);
+        if (storyStep.tiltSpeed != 0) servos.setTilt(storyStep.tiltSpeed);
+        if (storyStep.speech) robotFace.showSpeech(String(storyStep.speech));
+    }
+    if (!storyEngine.isPlaying() && storyEngine.currentStoryId() >= 0) {
+        achievements.check("story");
+    }
+
+    // Pet Mode update
+    int petAction = petEngine.update();
+    if (petAction > 0 && !storyEngine.isPlaying() && !isDancing && !isMacroAction) {
+        switch (petAction) {
+            case 1: robotFace.setEmotion(RobotFace::SLEEPY); break;
+            case 2: robotFace.setEmotion(RobotFace::IDLE); break; // look around via eye drift
+            case 3: robotFace.setEmotion(RobotFace::HAPPY); if(!stealthMode) soundEngine.playChirp(); break;
+            case 4: robotFace.setEmotion(RobotFace::ANGRY); break;
+            case 5: robotFace.setEmotion(RobotFace::CRYING); break;
+            case 6: robotFace.setEmotion(RobotFace::HAPPY); if(!stealthMode) soundEngine.playGiggle(); break;
+            case 7: robotFace.setEmotion(RobotFace::LOVE); if(!stealthMode) soundEngine.playGiggle(); break;
+        }
+    }
+
+    // RGB Effects update
+    rgbEngine.update(motor, motorOk);
+    if (rgbEngine.autoSync && motorOk) {
+        rgbEngine.syncToEmotion(motor, motorOk, (int)robotFace.getEmotion());
     }
 
     // Reverse beep
@@ -981,14 +1197,24 @@ void loop() {
     static unsigned long lastPush = 0;
     if (millis() - lastPush > 150) {
         lastPush = millis();
-        // Update face heading from IMU
-        robotFace.heading = imuFilter.heading;
         pushTelemetry();
     }
 
+    // ===== HUD TELEMETRY UPDATE =====
+    static unsigned long lastHudUpdate = 0;
+    if (millis() - lastHudUpdate > 1000) {
+        lastHudUpdate = millis();
+        robotFace.ipAddress = WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "OFFLINE";
+        robotFace.wifiName = WiFi.status() == WL_CONNECTED ? WiFi.SSID() : "Disconnected";
+        robotFace.batteryPct = M5.Power.getBatteryLevel();
+        robotFace.scoreDisplay = score;
+        robotFace.tamagotchiLvl = tamagotchiLevel;
+    }
+    robotFace.heading = imuFilter.heading;
+
     // Face update
     if (!stealthMode) {
-        robotFace.update(actualOut, 0);
+        robotFace.update(actualOut, servos.steerSpeed);
     }
 
     // WebSocket cleanup
