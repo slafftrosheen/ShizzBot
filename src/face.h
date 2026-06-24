@@ -553,54 +553,29 @@ private:
             }
         }
 
-        // ===== OVERLAYS =====
-        drawOverlay(w, h);
-        drawSpeechBubble(w);
-
         // ===== HUD GRAPHICS =====
         _canvas.setTextSize(1);
         _canvas.setTextColor(accent);
 
-        // Top-Left: WiFi Network
+        // Top-Left: IP Address
         _canvas.setCursor(4, 4);
-        _canvas.print("WiFi: ");
-        _canvas.print(wifiName);
-
-        // Top-Right: Battery & Compass
-        int compassX = w - 16, compassY = 16;
-        _canvas.drawCircle(compassX, compassY, 10, accent);
-        float headRad = heading * 0.01745f;
-        int nx = compassX + sin(headRad) * 8;
-        int ny = compassY - cos(headRad) * 8;
-        _canvas.drawLine(compassX, compassY, nx, ny, accent);
-
-        String battStr = String(batteryPct) + "%";
-        int battW = battStr.length() * 6;
-        // Draw Battery Icon
-        int bx = compassX - 22 - battW;
-        int by = 6;
-        _canvas.drawRect(bx, by, 16, 8, accent);
-        _canvas.fillRect(bx+16, by+2, 2, 4, accent);
-        int fillW = (batteryPct * 14) / 100;
-        if (fillW > 0) _canvas.fillRect(bx+1, by+1, fillW, 6, batteryPct > 20 ? TFT_GREEN : TFT_RED);
-        _canvas.setCursor(bx + 20, by);
-        _canvas.print(battStr);
-
-        // Bottom-Left: IP Address
-        _canvas.setCursor(4, h - 12);
         _canvas.print(ipAddress);
 
-        // Bottom-Right: Level / Score
+        // Top-Right: Level / Score
         String lvlStr = "Lvl:" + String(tamagotchiLvl) + " XP:" + String(scoreDisplay);
         int lvlW = lvlStr.length() * 6;
-        _canvas.setCursor(w - lvlW - 4, h - 12);
+        _canvas.setCursor(w - lvlW - 4, 4);
         _canvas.print(lvlStr);
 
         // Center-Bottom: Robot Name (Prominent)
         _canvas.setTextSize(2);
         int nameW = robotName.length() * 12;
-        _canvas.setCursor((w - nameW) / 2, h - 22);
+        _canvas.setCursor((w - nameW) / 2, h - 20);
         _canvas.print(robotName);
+
+        // ===== OVERLAYS =====
+        drawOverlay(w, h);
+        drawSpeechBubble(w);
 
         _canvas.pushSprite(0, 0);
     }
