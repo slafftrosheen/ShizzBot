@@ -554,24 +554,18 @@ private:
         }
 
         // ===== HUD GRAPHICS =====
-        _canvas.setTextSize(1);
-        _canvas.setTextColor(accent);
-
-        // Top-Left: IP Address
-        _canvas.setCursor(4, 4);
-        _canvas.print(ipAddress);
-
-        // Top-Right: Level / Score
-        String lvlStr = "Lvl:" + String(tamagotchiLvl) + " XP:" + String(scoreDisplay);
-        int lvlW = lvlStr.length() * 6;
-        _canvas.setCursor(w - lvlW - 4, 4);
-        _canvas.print(lvlStr);
-
-        // Center-Bottom: Robot Name (Prominent)
+        // Center-Bottom: Robot Name
         _canvas.setTextSize(2);
+        _canvas.setTextColor(accent);
         int nameW = robotName.length() * 12;
-        _canvas.setCursor((w - nameW) / 2, h - 20);
+        _canvas.setCursor((w - nameW) / 2, h - 26);
         _canvas.print(robotName);
+
+        // Very Bottom-Center: IP Address
+        _canvas.setTextSize(1);
+        int ipW = ipAddress.length() * 6;
+        _canvas.setCursor((w - ipW) / 2, h - 9);
+        _canvas.print(ipAddress);
 
         // ===== OVERLAYS =====
         drawOverlay(w, h);
